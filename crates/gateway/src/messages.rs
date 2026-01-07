@@ -55,7 +55,9 @@ pub struct MarketEvent {
     pub bids: Option<Vec<PriceLevel>>,
     #[serde(default)]
     pub asks: Option<Vec<PriceLevel>>,
-    /// Price change data
+    /// Price change data (price_change event)
+    #[serde(default)]
+    pub price_changes: Option<Vec<PriceChangeLevel>>,
     #[serde(default)]
     pub price: Option<String>,
     #[serde(default)]
@@ -79,13 +81,24 @@ pub struct PriceLevel {
     pub size: String,
 }
 
+/// Price change entry in a price_change event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PriceChangeLevel {
+    /// Price as string (e.g., "0.55")
+    pub price: String,
+    /// Side as string ("buy" or "sell")
+    pub side: String,
+    /// NEW aggregate size at level
+    pub size: String,
+}
+
 /// Parsed book snapshot event.
 #[derive(Debug, Clone)]
 pub struct BookSnapshot {
     pub asset_id: String,
     pub timestamp_ms: u64,
     pub hash: String,
-    pub bids: Vec<(u16, u64)>, // (tick, size in centishares)
+    pub bids: Vec<(u16, u64)>, // (tick, size in shares)
     pub asks: Vec<(u16, u64)>,
 }
 
@@ -94,8 +107,15 @@ pub struct BookSnapshot {
 pub struct PriceChange {
     pub asset_id: String,
     pub timestamp_ms: u64,
+    pub changes: Vec<PriceChangeUpdate>,
+}
+
+/// Parsed price change level update (new size at price).
+#[derive(Debug, Clone)]
+pub struct PriceChangeUpdate {
     pub price_tick: u16,
     pub side: crate::Side,
+    pub new_size: u64,
 }
 
 /// Parsed last trade price event.
@@ -104,7 +124,7 @@ pub struct LastTradePrice {
     pub asset_id: String,
     pub timestamp_ms: u64,
     pub price_tick: u16,
-    pub size_centishares: u64,
+    pub size_shares: u64,
 }
 
 /// Parsed tick size change event.

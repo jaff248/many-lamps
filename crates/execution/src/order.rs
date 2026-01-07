@@ -8,14 +8,11 @@
 //!
 //! The state machine ensures we never lose track of orders.
 
-use mtrader_core::{OrderReason, Side, Size, Tick};
+use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Unique order identifier.
 pub type OrderId = String;
-
-/// Client-assigned order ID for idempotency.
-pub type ClientOrderId = String;
 
 /// Order state in the lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,6 +84,10 @@ impl OrderState {
 pub enum OrderType {
     /// Good-til-cancelled limit order
     Limit,
+    /// Market buy with amount in USDC (micro USDC)
+    MarketBuy { usdc_amount: u64 },
+    /// Market sell with size in shares (micro shares)
+    MarketSell { size_shares: Size },
     /// Fill-or-kill (immediate full fill or cancel)
     FOK,
     /// Good-til-date
@@ -104,9 +105,9 @@ pub struct Order {
     pub asset_id: String,
     /// Buy or Sell
     pub side: Side,
-    /// Price as tick (1 tick = 1 cent for 0.01 tick size)
+    /// Price as tick (1 tick = 0.0001, 0..10000)
     pub price_tick: Tick,
-    /// Original order size in centishares
+    /// Original order size in micro-shares (limit orders)
     pub original_size: Size,
     /// Remaining unfilled size
     pub remaining_size: Size,
@@ -230,10 +231,10 @@ mod tests {
     #[test]
     fn test_order_lifecycle_normal() {
         let mut order = Order::new(
-            "client-1".into(),
+            ClientOrderId("client-1".into()),
             "asset-123".into(),
             Side::Buy,
-            50, // 0.50
+            5000, // 0.50
             100_000, // 1000 shares
             OrderType::Limit,
             OrderReason::MakerQuote,
@@ -262,10 +263,10 @@ mod tests {
     #[test]
     fn test_order_cancel_flow() {
         let mut order = Order::new(
-            "client-2".into(),
+            ClientOrderId("client-2".into()),
             "asset-123".into(),
             Side::Sell,
-            55,
+            5500,
             100_000,
             OrderType::Limit,
             OrderReason::MakerQuote,
@@ -284,10 +285,10 @@ mod tests {
     #[test]
     fn test_cancel_race_with_fill() {
         let mut order = Order::new(
-            "client-3".into(),
+            ClientOrderId("client-3".into()),
             "asset-123".into(),
             Side::Buy,
-            50,
+            5000,
             100_000,
             OrderType::Limit,
             OrderReason::MakerQuote,
@@ -305,10 +306,10 @@ mod tests {
     #[test]
     fn test_invalid_transition() {
         let mut order = Order::new(
-            "client-4".into(),
+            ClientOrderId("client-4".into()),
             "asset-123".into(),
             Side::Buy,
-            50,
+            5000,
             100_000,
             OrderType::Limit,
             OrderReason::MakerQuote,

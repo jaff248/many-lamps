@@ -15,7 +15,7 @@ pub struct CircuitBreakerConfig {
     pub loss_period_ns: u64,
     /// Maximum consecutive losses before tripping
     pub max_consecutive_losses: u32,
-    /// Maximum position delta per minute (centishares)
+    /// Maximum position delta per minute (micro-shares)
     pub max_position_delta_per_minute: i64,
     /// Cooldown period after trip (nanoseconds)
     pub cooldown_ns: u64,
@@ -32,7 +32,7 @@ impl Default for CircuitBreakerConfig {
             loss_period_ns: 3_600_000_000_000,
             // 10 consecutive losses
             max_consecutive_losses: 10,
-            // 1M centishares per minute position change
+            // 1M micro-shares per minute position change
             max_position_delta_per_minute: 1_000_000,
             // 5 minute cooldown
             cooldown_ns: 300_000_000_000,

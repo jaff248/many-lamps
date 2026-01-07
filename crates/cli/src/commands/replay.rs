@@ -4,9 +4,12 @@ use crate::config::Config;
 use anyhow::Result;
 use mtrader_book::ArrayBook;
 use mtrader_core::events::CoreEvent;
+use mtrader_core::ClientOrderId;
 use mtrader_risk::{PnLTracker, Position, PositionLimits};
 use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, PaperOrder, ReplayEngine, ReplayMode, ReplayStats};
 use mtrader_strategy::{MakerMMConfig, MakerMMStrategy, Strategy, StrategyAction, StrategyContext};
+use mtrader_execution::{Order, OrderType};
+use mtrader_core::OrderReason;
 use std::collections::VecDeque;
 use std::path::Path;
 use tracing::{error, info, warn};
@@ -135,7 +138,7 @@ pub async fn run(
         max_position: config.risk.max_position,
         max_notional: config.risk.max_position as u64 * 2,
         max_open_orders: config.risk.max_open_orders,
-        max_order_size: config.strategy.order_size as i64,
+        max_order_size: config.strategy.quote_size_shares as i64,
     };
 
     // Initialize fill simulator
@@ -147,12 +150,12 @@ pub async fn run(
 
     // Initialize strategy
     let strategy_config = MakerMMConfig {
-        spread_ticks: config.strategy.spread_ticks,
-        order_size: config.strategy.order_size as i64,
+        spread_ticks: config.strategy.half_spread_bps,
+        order_size: config.strategy.quote_size_shares as i64,
         num_levels: config.strategy.num_levels,
         skew_factor: config.strategy.skew_factor,
-        requote_threshold_ticks: config.strategy.requote_threshold,
-        min_edge_ticks: config.strategy.min_edge_ticks,
+        requote_threshold_ticks: config.strategy.requote_threshold_bps,
+        min_edge_ticks: config.strategy.min_edge_bps,
     };
     let mut strategy = MakerMMStrategy::new(strategy_config);
 
@@ -191,7 +194,7 @@ pub async fn run(
         // Advance fill simulator
         let sim_events = fill_sim.advance(current_time);
         for sim_event in sim_events {
-            if let mtrader_sim::SimEvent::OrderCancelled(order_id) = sim_event {
+            if let mtrader_sim::SimEvent::OrderCancelled { order_id, .. } = sim_event {
                 paper_book.remove_order(&order_id);
             }
         }
@@ -213,21 +216,33 @@ pub async fn run(
                 StrategyAction::PlaceOrder { side, price_tick, size, .. } => {
                     if limits.check_order(side, size, &position).is_ok() {
                         order_counter += 1;
-                        let order_id = format!("replay-{}", order_counter);
+                        let client_order_id = ClientOrderId(format!("replay-{}", order_counter));
+                        let order = Order::new(
+                            client_order_id,
+                            "replay-asset".to_string(),
+                            side,
+                            price_tick,
+                            size,
+                            OrderType::Limit,
+                            OrderReason::MakerQuote,
+                            current_time,
+                        );
+                        let queue_ahead = paper_book.estimate_queue_ahead(side, price_tick);
+                        let order_id = fill_sim.submit_order(order, queue_ahead, current_time);
 
-                        fill_sim.submit_order(order_id.clone(), side, price_tick, size, current_time);
                         paper_book.add_order(PaperOrder {
                             order_id,
                             side,
                             price_tick,
                             size,
                             timestamp_ns: current_time,
+                            queue_ahead,
                         });
                     }
                 }
 
                 StrategyAction::CancelOrder { order_id, .. } => {
-                    fill_sim.cancel_order(&order_id, current_time);
+                    fill_sim.cancel_order(&order_id.0, current_time);
                 }
 
                 StrategyAction::CancelAll { .. } => {

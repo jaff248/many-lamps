@@ -4,14 +4,14 @@
 //! fee = coefficient × price × (1-price) × size
 //!
 //! Fee table points (per 100 shares, fee_rate_bps=1000):
-//! - price=0.10: ~0.90 (tokens)
-//! - price=0.25: ~1.875
-//! - price=0.50: ~2.50 (peak)
-//! - price=0.75: ~1.875
-//! - price=0.90: ~0.90
+//! - price=0.10: ~0.5625 (tokens)
+//! - price=0.25: ~1.1719
+//! - price=0.50: ~1.5625 (peak)
+//! - price=0.75: ~1.1719
+//! - price=0.90: ~0.5625
 //!
 //! The coefficient is derived from fee_rate_bps:
-//! coefficient = fee_rate_bps / 10000 (i.e., 1000 bps = 0.10)
+//! coefficient = fee_rate_bps / 16000 (i.e., 1000 bps = 0.0625)
 
 use crate::types::{Size, Tick, Side, SIZE_DECIMALS};
 
@@ -40,12 +40,12 @@ impl FeeModel {
         Self::new(0)
     }
 
-    /// Calculate fee in micro-units (same denomination as Size)
-    /// 
-    /// Formula: fee = (fee_rate_bps / 10000) × (price) × (1 - price) × size
-    /// 
+    /// Calculate fee in micro-shares (same denomination as Size)
+    ///
+    /// Formula: fee = (fee_rate_bps / 16000) × price × (1 - price) × size
+    ///
     /// Using fixed-point to avoid floating-point in hot path:
-    /// fee = (fee_rate_bps × tick × (10000 - tick) × size) / (10000 × 10000 × 10000)
+    /// fee = (fee_rate_bps × tick × (10000 - tick) × size) / (16000 × 10000 × 10000)
     pub fn calculate_fee(&self, price_tick: Tick, size: Size) -> Size {
         if self.fee_rate_bps == 0 || size == 0 {
             return 0;
@@ -58,22 +58,22 @@ impl FeeModel {
         let rate = self.fee_rate_bps as u128;
         let sz = size as u128;
 
-        // fee = rate × tick × complement × size / (10000^3)
+        // fee = rate × tick × complement × size / (16000 × 10000^2)
         // To avoid overflow: compute in steps
         // Maximum values: rate=10000, tick=10000, complement=10000, size=10^18
         // rate × tick × complement = 10^12 (fits in u128)
         // × size = 10^30 (fits in u128)
-        // / 10^12 = 10^18 (fits in u64)
+        // / 1.6e12 = 6.25e17 (fits in u64)
 
         let numerator = rate * tick * complement * sz;
-        let denominator = 10000u128 * 10000u128 * 10000u128;
+        let denominator = 16000u128 * 10000u128 * 10000u128;
 
         (numerator / denominator) as Size
     }
 
     /// Calculate fee as floating point (for display/logging only)
     pub fn calculate_fee_f64(&self, price: f64, size: f64) -> f64 {
-        let rate = self.fee_rate_bps as f64 / 10000.0;
+        let rate = self.fee_rate_bps as f64 / 16000.0;
         rate * price * (1.0 - price) * size
     }
 
@@ -255,37 +255,37 @@ mod tests {
     #[test]
     fn test_fee_at_50_percent() {
         let model = FeeModel::btc_15min();
-        // At price 0.50, fee should be 0.10 × 0.50 × 0.50 × size = 0.025 × size
-        // For 100 shares (100_000_000 micro): fee = 2_500_000 micro = 2.5 shares
+        // At price 0.50, fee should be 0.0625 × 0.50 × 0.50 × size = 0.015625 × size
+        // For 100 shares (100_000_000 micro): fee = 1_562_500 micro = 1.5625 shares
         let fee = model.calculate_fee(5000, 100_000_000);
-        assert_eq!(fee, 2_500_000); // 2.5 shares
+        assert_eq!(fee, 1_562_500);
     }
 
     #[test]
     fn test_fee_at_10_percent() {
         let model = FeeModel::btc_15min();
-        // At price 0.10, fee = 0.10 × 0.10 × 0.90 × size = 0.009 × size
-        // For 100 shares: fee = 900_000 micro = 0.9 shares
+        // At price 0.10, fee = 0.0625 × 0.10 × 0.90 × size = 0.005625 × size
+        // For 100 shares: fee = 562_500 micro = 0.5625 shares
         let fee = model.calculate_fee(1000, 100_000_000);
-        assert_eq!(fee, 900_000);
+        assert_eq!(fee, 562_500);
     }
 
     #[test]
     fn test_fee_at_90_percent() {
         let model = FeeModel::btc_15min();
-        // At price 0.90, fee = 0.10 × 0.90 × 0.10 × size = 0.009 × size
+        // At price 0.90, fee = 0.0625 × 0.90 × 0.10 × size = 0.005625 × size
         // Symmetric with 10%
         let fee = model.calculate_fee(9000, 100_000_000);
-        assert_eq!(fee, 900_000);
+        assert_eq!(fee, 562_500);
     }
 
     #[test]
     fn test_fee_at_25_percent() {
         let model = FeeModel::btc_15min();
-        // At price 0.25, fee = 0.10 × 0.25 × 0.75 × size = 0.01875 × size
-        // For 100 shares: fee = 1_875_000 micro = 1.875 shares
+        // At price 0.25, fee = 0.0625 × 0.25 × 0.75 × size = 0.01171875 × size
+        // For 100 shares: fee = 1_171_875 micro = 1.171875 shares
         let fee = model.calculate_fee(2500, 100_000_000);
-        assert_eq!(fee, 1_875_000);
+        assert_eq!(fee, 1_171_875);
     }
 
     #[test]
@@ -332,8 +332,8 @@ mod tests {
         let ev = model.bundle_arb_ev(4900, 4900, 100_000_000);
         
         assert_eq!(ev.raw_edge_bps, 200);
-        // Fees at 0.49: 0.10 × 0.49 × 0.51 × size = 0.02499 × size per leg
-        // Total fees ≈ 0.05 × size = 5_000_000 micro
+        // Fees at 0.49: 0.0625 × 0.49 × 0.51 × size = 0.01561875 × size per leg
+        // Total fees ≈ 0.03125 × size = 3_125_000 micro
         // Raw edge = 0.02 × size = 2_000_000 micro
         // This should NOT be profitable
         assert!(!ev.is_profitable());
@@ -384,7 +384,7 @@ mod tests {
         let size = 100_000_000u64; // 100 shares
         
         // These are the expected values based on the parabolic formula
-        // fee = 0.10 × price × (1-price) × 100
+        // fee = 0.0625 × price × (1-price) × 100
         struct TestPoint {
             price_tick: Tick,
             expected_fee_shares: f64,
@@ -392,11 +392,11 @@ mod tests {
         }
 
         let test_points = [
-            TestPoint { price_tick: 1000, expected_fee_shares: 0.9, tolerance: 0.01 },
-            TestPoint { price_tick: 2500, expected_fee_shares: 1.875, tolerance: 0.01 },
-            TestPoint { price_tick: 5000, expected_fee_shares: 2.5, tolerance: 0.01 },
-            TestPoint { price_tick: 7500, expected_fee_shares: 1.875, tolerance: 0.01 },
-            TestPoint { price_tick: 9000, expected_fee_shares: 0.9, tolerance: 0.01 },
+            TestPoint { price_tick: 1000, expected_fee_shares: 0.5625, tolerance: 0.01 },
+            TestPoint { price_tick: 2500, expected_fee_shares: 1.1719, tolerance: 0.01 },
+            TestPoint { price_tick: 5000, expected_fee_shares: 1.5625, tolerance: 0.01 },
+            TestPoint { price_tick: 7500, expected_fee_shares: 1.1719, tolerance: 0.01 },
+            TestPoint { price_tick: 9000, expected_fee_shares: 0.5625, tolerance: 0.01 },
         ];
 
         for tp in test_points {

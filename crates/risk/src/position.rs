@@ -7,7 +7,7 @@ use std::collections::HashMap;
 /// A position in a single asset.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Position {
-    /// Net position in centishares (positive = long, negative = short)
+    /// Net position in micro-shares (positive = long, negative = short)
     pub net_size: i64,
     /// Volume-weighted average entry price (in ticks)
     pub avg_entry_tick: Option<Tick>,
@@ -68,9 +68,9 @@ impl Position {
                     // Was short, now buying
                     entry as i64 - price_tick as i64
                 };
-                // PnL in micro-USDC: (tick_diff / 100) * (size / 100) * 1_000_000
-                // = tick_diff * size * 100
-                self.realized_pnl_micro_usdc += pnl_per_share * closing_size as i64 * 100;
+                // PnL in micro-USDC: (tick_diff / 10000) * size
+                self.realized_pnl_micro_usdc +=
+                    (pnl_per_share * closing_size as i64) / 10000;
             }
 
             // Update position
@@ -102,7 +102,7 @@ impl Position {
             entry as i64 - current_tick as i64
         };
 
-        pnl_per_share * self.net_size.abs() * 100
+        (pnl_per_share * self.net_size.abs()) / 10000
     }
 
     /// Check if position is long.
@@ -199,73 +199,73 @@ mod tests {
     fn test_position_long_open_close() {
         let mut pos = Position::new();
 
-        // Buy 1000 shares at tick 50 (0.50)
-        pos.on_fill(Side::Buy, 50, 100_000);
-        assert_eq!(pos.net_size, 100_000);
-        assert_eq!(pos.avg_entry_tick, Some(50));
+        // Buy 1 share at tick 5000 (0.50)
+        pos.on_fill(Side::Buy, 5000, 1_000_000);
+        assert_eq!(pos.net_size, 1_000_000);
+        assert_eq!(pos.avg_entry_tick, Some(5000));
 
-        // Sell 1000 shares at tick 55 (0.55) - profit!
-        pos.on_fill(Side::Sell, 55, 100_000);
+        // Sell 1 share at tick 5500 (0.55) - profit!
+        pos.on_fill(Side::Sell, 5500, 1_000_000);
         assert_eq!(pos.net_size, 0);
         assert!(pos.is_flat());
 
-        // PnL: 5 ticks * 100000 centishares * 100 = 50_000_000 micro-USDC = $50
-        assert_eq!(pos.realized_pnl_micro_usdc, 50_000_000);
+        // PnL: 500 ticks * 1_000_000 / 10000 = 50_000 micro-USDC = $0.05
+        assert_eq!(pos.realized_pnl_micro_usdc, 50_000);
     }
 
     #[test]
     fn test_position_short_open_close() {
         let mut pos = Position::new();
 
-        // Sell 1000 shares at tick 60 (0.60)
-        pos.on_fill(Side::Sell, 60, 100_000);
-        assert_eq!(pos.net_size, -100_000);
+        // Sell 1 share at tick 6000 (0.60)
+        pos.on_fill(Side::Sell, 6000, 1_000_000);
+        assert_eq!(pos.net_size, -1_000_000);
         assert!(pos.is_short());
 
-        // Buy 1000 shares at tick 55 (0.55) - profit on short!
-        pos.on_fill(Side::Buy, 55, 100_000);
+        // Buy 1 share at tick 5500 (0.55) - profit on short!
+        pos.on_fill(Side::Buy, 5500, 1_000_000);
         assert!(pos.is_flat());
 
-        // PnL: 5 ticks * 100000 centishares * 100 = 50_000_000 micro-USDC = $50
-        assert_eq!(pos.realized_pnl_micro_usdc, 50_000_000);
+        // PnL: 500 ticks * 1_000_000 / 10000 = 50_000 micro-USDC = $0.05
+        assert_eq!(pos.realized_pnl_micro_usdc, 50_000);
     }
 
     #[test]
     fn test_position_add_to_long() {
         let mut pos = Position::new();
 
-        // Buy 500 at 50
-        pos.on_fill(Side::Buy, 50, 50_000);
-        // Buy 500 at 52
-        pos.on_fill(Side::Buy, 52, 50_000);
+        // Buy 0.5 at 5000
+        pos.on_fill(Side::Buy, 5000, 500_000);
+        // Buy 0.5 at 5200
+        pos.on_fill(Side::Buy, 5200, 500_000);
 
-        assert_eq!(pos.net_size, 100_000);
-        // Average entry: (50 * 50000 + 52 * 50000) / 100000 = 51
-        assert_eq!(pos.avg_entry_tick, Some(51));
+        assert_eq!(pos.net_size, 1_000_000);
+        // Average entry: (5000 * 500000 + 5200 * 500000) / 1000000 = 5100
+        assert_eq!(pos.avg_entry_tick, Some(5100));
     }
 
     #[test]
     fn test_unrealized_pnl() {
         let mut pos = Position::new();
-        pos.on_fill(Side::Buy, 50, 100_000);
+        pos.on_fill(Side::Buy, 5000, 1_000_000);
 
-        // Price at 55: unrealized profit
-        let pnl = pos.unrealized_pnl_micro_usdc(55);
-        assert_eq!(pnl, 50_000_000); // $50 profit
+        // Price at 5500: unrealized profit
+        let pnl = pos.unrealized_pnl_micro_usdc(5500);
+        assert_eq!(pnl, 50_000); // $0.05 profit
 
-        // Price at 45: unrealized loss
-        let pnl = pos.unrealized_pnl_micro_usdc(45);
-        assert_eq!(pnl, -50_000_000); // $50 loss
+        // Price at 4500: unrealized loss
+        let pnl = pos.unrealized_pnl_micro_usdc(4500);
+        assert_eq!(pnl, -50_000); // $0.05 loss
     }
 
     #[test]
     fn test_position_tracker() {
         let mut tracker = PositionTracker::new();
 
-        tracker.on_fill("asset-1", Side::Buy, 50, 100_000);
-        tracker.on_fill("asset-2", Side::Sell, 60, 50_000);
+        tracker.on_fill("asset-1", Side::Buy, 5000, 1_000_000);
+        tracker.on_fill("asset-2", Side::Sell, 6000, 500_000);
 
-        assert_eq!(tracker.gross_position(), 150_000);
-        assert_eq!(tracker.net_position(), 50_000); // 100k - 50k
+        assert_eq!(tracker.gross_position(), 1_500_000);
+        assert_eq!(tracker.net_position(), 500_000); // 1M - 0.5M
     }
 }

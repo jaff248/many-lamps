@@ -5,10 +5,10 @@
 
 use crate::error::GatewayError;
 use crate::messages::{
-    BookSnapshot, LastTradePrice, MarketEvent, PriceChange, PriceLevel,
+    BookSnapshot, LastTradePrice, MarketEvent, PriceChange, PriceChangeUpdate, PriceLevel,
     TickSizeChange, WsMessage,
 };
-use mtrader_core::{Side, Tick, Size};
+use mtrader_core::{parse_price_to_tick_strict, parse_size, Side, Size, Tick};
 
 /// Parsed event with raw frame preserved.
 #[derive(Debug, Clone)]
@@ -134,21 +134,25 @@ impl Parser {
     }
 
     fn parse_price_change(&self, event: MarketEvent) -> Result<ParsedEvent, GatewayError> {
-        let price_str = event
-            .price
-            .ok_or_else(|| GatewayError::InvalidMessage("Price change missing price".into()))?;
-        let side_str = event
-            .side
-            .ok_or_else(|| GatewayError::InvalidMessage("Price change missing side".into()))?;
-
-        let price_tick = self.parse_price_to_tick(&price_str)?;
-        let side = parse_side(&side_str)?;
+        let price_changes = event.price_changes.ok_or_else(|| {
+            GatewayError::InvalidMessage("Price change missing price_changes".into())
+        })?;
+        let mut changes = Vec::with_capacity(price_changes.len());
+        for change in price_changes {
+            let price_tick = self.parse_price_to_tick(&change.price)?;
+            let side = parse_side(&change.side)?;
+            let new_size = self.parse_size(&change.size)?;
+            changes.push(PriceChangeUpdate {
+                price_tick,
+                side,
+                new_size,
+            });
+        }
 
         Ok(ParsedEvent::PriceChange(PriceChange {
             asset_id: event.asset_id,
             timestamp_ms: event.timestamp.unwrap_or(0),
-            price_tick,
-            side,
+            changes,
         }))
     }
 
@@ -161,13 +165,13 @@ impl Parser {
             .ok_or_else(|| GatewayError::InvalidMessage("Trade missing size".into()))?;
 
         let price_tick = self.parse_price_to_tick(&price_str)?;
-        let size_centishares = self.parse_size(&size_str)?;
+        let size_shares = self.parse_size(&size_str)?;
 
         Ok(ParsedEvent::LastTradePrice(LastTradePrice {
             asset_id: event.asset_id,
             timestamp_ms: event.timestamp.unwrap_or(0),
             price_tick,
-            size_centishares,
+            size_shares,
         }))
     }
 
@@ -192,44 +196,14 @@ impl Parser {
 
     /// Parse a price string (e.g., "0.55") to tick.
     fn parse_price_to_tick(&self, price_str: &str) -> Result<Tick, GatewayError> {
-        let price: f64 = price_str
-            .parse()
-            .map_err(|_| GatewayError::InvalidMessage(format!("Invalid price: {}", price_str)))?;
-
-        // Convert to basis points (0.55 -> 5500)
-        let bps = (price * 10000.0).round() as u32;
-
-        // Must be divisible by tick size
-        if bps % self.tick_size_bps as u32 != 0 {
-            return Err(GatewayError::InvalidMessage(format!(
-                "Price {} not aligned to tick size {}",
-                price_str, self.tick_size_bps
-            )));
-        }
-
-        // Convert to tick index
-        let tick = bps / self.tick_size_bps as u32;
-
-        if tick > 10000 {
-            return Err(GatewayError::InvalidMessage(format!(
-                "Price {} out of range",
-                price_str
-            )));
-        }
-
-        Ok(tick as Tick)
+        parse_price_to_tick_strict(price_str, self.tick_size_bps)
+            .map_err(|e| GatewayError::InvalidMessage(format!("Invalid price: {}", e)))
     }
 
-    /// Parse a size string (e.g., "1000.5") to centishares.
+    /// Parse a size string (e.g., "1000.5") to shares.
     fn parse_size(&self, size_str: &str) -> Result<Size, GatewayError> {
-        let size: f64 = size_str
-            .parse()
-            .map_err(|_| GatewayError::InvalidMessage(format!("Invalid size: {}", size_str)))?;
-
-        // Convert to centishares (1000.5 -> 100050)
-        let centishares = (size * 100.0).round() as u64;
-
-        Ok(centishares)
+        parse_size(size_str)
+            .map_err(|e| GatewayError::InvalidMessage(format!("Invalid size: {}", e)))
     }
 }
 
@@ -277,27 +251,27 @@ mod tests {
     fn test_parse_price_to_tick() {
         let parser = Parser::new(); // 1 cent ticks (100 bps)
 
-        assert_eq!(parser.parse_price_to_tick("0.50").unwrap(), 50);
-        assert_eq!(parser.parse_price_to_tick("0.01").unwrap(), 1);
-        assert_eq!(parser.parse_price_to_tick("0.99").unwrap(), 99);
-        assert_eq!(parser.parse_price_to_tick("1.00").unwrap(), 100);
+        assert_eq!(parser.parse_price_to_tick("0.50").unwrap(), 5000);
+        assert_eq!(parser.parse_price_to_tick("0.01").unwrap(), 100);
+        assert_eq!(parser.parse_price_to_tick("0.99").unwrap(), 9900);
+        assert_eq!(parser.parse_price_to_tick("1.00").unwrap(), 10000);
     }
 
     #[test]
     fn test_parse_price_alignment_error() {
         let parser = Parser::new(); // 1 cent ticks
 
-        // 0.555 is not aligned to 1 cent
-        assert!(parser.parse_price_to_tick("0.555").is_err());
+        // 0.551 is not aligned to 1 cent
+        assert!(parser.parse_price_to_tick("0.551").is_err());
     }
 
     #[test]
     fn test_parse_size() {
         let parser = Parser::new();
 
-        assert_eq!(parser.parse_size("1000").unwrap(), 100_000);
-        assert_eq!(parser.parse_size("1000.5").unwrap(), 100_050);
-        assert_eq!(parser.parse_size("0.01").unwrap(), 1);
+        assert_eq!(parser.parse_size("1000").unwrap(), 1_000_000_000);
+        assert_eq!(parser.parse_size("1000.5").unwrap(), 1_000_500_000);
+        assert_eq!(parser.parse_size("0.01").unwrap(), 10_000);
     }
 
     #[test]
@@ -320,10 +294,38 @@ mod tests {
                 assert_eq!(book.asset_id, "12345");
                 assert_eq!(book.hash, "abc123");
                 assert_eq!(book.bids.len(), 1);
-                assert_eq!(book.bids[0], (50, 100_000));
-                assert_eq!(book.asks[0], (51, 200_000));
+                assert_eq!(book.bids[0], (5000, 1_000_000_000));
+                assert_eq!(book.asks[0], (5100, 2_000_000_000));
             }
             _ => panic!("Expected book event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_price_change_event() {
+        let json = r#"[{
+            "event_type": "price_change",
+            "asset_id": "12345",
+            "timestamp": 1700000000000,
+            "price_changes": [
+                {"price": "0.50", "side": "buy", "size": "100"},
+                {"price": "0.51", "side": "sell", "size": "200"}
+            ]
+        }]"#;
+
+        let parser = Parser::new();
+        let frame = parser.parse_frame(json.as_bytes(), 0).unwrap();
+
+        assert_eq!(frame.events.len(), 1);
+        match &frame.events[0] {
+            ParsedEvent::PriceChange(change) => {
+                assert_eq!(change.changes.len(), 2);
+                assert_eq!(change.changes[0].price_tick, 5000);
+                assert_eq!(change.changes[0].new_size, 100_000_000);
+                assert_eq!(change.changes[1].price_tick, 5100);
+                assert_eq!(change.changes[1].new_size, 200_000_000);
+            }
+            _ => panic!("Expected price_change event"),
         }
     }
 

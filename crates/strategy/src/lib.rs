@@ -14,4 +14,4 @@ pub mod traits;
 pub use maker_mm::MakerMMStrategy;
 pub use bundle_maker::BundleMakerStrategy;
 pub use signals::{Signal, SignalProcessor};
-pub use traits::{Strategy, StrategyAction, StrategyContext};
+pub use traits::{Strategy, StrategyAction, StrategyContext, WorkingOrder};

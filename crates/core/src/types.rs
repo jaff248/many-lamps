@@ -7,8 +7,8 @@ use std::fmt;
 /// e.g., 0.55 = 5500, 0.01 = 100, 1.00 = 10000
 pub type Tick = u16;
 
-/// Size in micro-units (10^-6), matching USDC 6 decimals
-/// 1.0 share = 1_000_000 micro-units
+/// Size in micro-shares (10^-6 of an outcome token share)
+/// 1.0 share = 1_000_000 micro-shares
 pub type Size = u64;
 
 /// Maximum valid tick (price = 1.0000)
@@ -167,7 +167,7 @@ pub fn tick_to_price_string(tick: Tick) -> String {
     format!("{:.4}", price).trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Parse size string to micro-units
+/// Parse size string to micro-shares
 /// "30" → 30_000_000, "1.5" → 1_500_000
 pub fn parse_size(s: &str) -> Result<Size, SizeParseError> {
     let f: f64 = s.parse().map_err(|_| SizeParseError::InvalidFormat(s.to_string()))?;
@@ -177,7 +177,7 @@ pub fn parse_size(s: &str) -> Result<Size, SizeParseError> {
     Ok((f * SIZE_DECIMALS as f64).round() as Size)
 }
 
-/// Convert micro-units to size string
+/// Convert micro-shares to size string
 pub fn size_to_string(size: Size) -> String {
     let f = size as f64 / SIZE_DECIMALS as f64;
     format!("{}", f)

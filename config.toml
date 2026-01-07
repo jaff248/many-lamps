@@ -9,21 +9,23 @@ reconnect_delay_ms = 1000
 request_timeout_ms = 5000
 
 [strategy]
-# Spread in ticks (1 tick = 1%)
-spread_ticks = 2
-# Order size in micro USDC (100_000_000 = $100)
-order_size = 100000000
+# Tick size in basis points (100 = $0.01)
+tick_size_bps = 100
+# Half-spread in basis point ticks (1 tick = 0.0001)
+half_spread_bps = 2
+# Quote size in micro-shares (1_000_000 = 1 share)
+quote_size_shares = 1000000
 # Number of price levels to quote
 num_levels = 3
 # Position skew factor (0.0 = no skew, 1.0 = full skew)
 skew_factor = 0.5
-# Requote if mid moves more than this many ticks
-requote_threshold = 1
-# Minimum edge in ticks to quote
-min_edge_ticks = 1
+# Requote if mid moves more than this many bps ticks
+requote_threshold_bps = 1
+# Minimum edge in bps ticks to quote
+min_edge_bps = 1
 
 [risk]
-# Maximum position in micro USDC ($1000)
+# Maximum position in micro-shares (1000 shares)
 max_position = 1000000000
 # Maximum daily loss in micro USDC ($100)
 max_daily_loss = 100000000
@@ -31,7 +33,7 @@ max_daily_loss = 100000000
 max_drawdown_pct = 0.10
 # Maximum open orders
 max_open_orders = 20
-# Fee rate in basis points (1000 = 10% for 15-min markets)
+# Fee rate in basis points (1000 = 0.0625 coefficient for 15-min markets)
 fee_rate_bps = 1000
 
 [recording]
@@ -45,7 +47,7 @@ max_events_per_file = 1000000
 enabled = true
 # Enter safe mode after this many consecutive errors
 max_consecutive_errors = 3
-# Enter safe mode if book drifts more than this many ticks
+# Enter safe mode if book drifts more than this many bps ticks
 book_drift_threshold = 5
 # Enter safe mode if message latency exceeds this (ms)
 max_message_latency_ms = 5000

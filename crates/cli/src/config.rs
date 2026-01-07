@@ -87,13 +87,17 @@ impl Default for GatewayConfig {
 /// Strategy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyConfig {
-    /// Default spread in ticks.
-    #[serde(default = "default_spread_ticks")]
-    pub spread_ticks: u16,
+    /// Tick size in basis points (100 = $0.01).
+    #[serde(default = "default_tick_size_bps")]
+    pub tick_size_bps: u16,
 
-    /// Order size (micro USDC).
-    #[serde(default = "default_order_size")]
-    pub order_size: u64,
+    /// Half-spread in basis points (tick = 0.0001).
+    #[serde(default = "default_half_spread_bps")]
+    pub half_spread_bps: u16,
+
+    /// Quote size in micro-shares.
+    #[serde(default = "default_quote_size_shares")]
+    pub quote_size_shares: u64,
 
     /// Number of levels to quote.
     #[serde(default = "default_num_levels")]
@@ -103,21 +107,25 @@ pub struct StrategyConfig {
     #[serde(default = "default_skew_factor")]
     pub skew_factor: f64,
 
-    /// Requote threshold (ticks).
-    #[serde(default = "default_requote_threshold")]
-    pub requote_threshold: u16,
+    /// Requote threshold (bps ticks).
+    #[serde(default = "default_requote_threshold_bps")]
+    pub requote_threshold_bps: u16,
 
-    /// Minimum edge (ticks).
-    #[serde(default = "default_min_edge")]
-    pub min_edge_ticks: u16,
+    /// Minimum edge (bps ticks).
+    #[serde(default = "default_min_edge_bps")]
+    pub min_edge_bps: u16,
 }
 
-fn default_spread_ticks() -> u16 {
+fn default_tick_size_bps() -> u16 {
+    100
+}
+
+fn default_half_spread_bps() -> u16 {
     2
 }
 
-fn default_order_size() -> u64 {
-    100_000_000 // 100 USDC
+fn default_quote_size_shares() -> u64 {
+    1_000_000 // 1 share
 }
 
 fn default_num_levels() -> u8 {
@@ -128,23 +136,24 @@ fn default_skew_factor() -> f64 {
     0.5
 }
 
-fn default_requote_threshold() -> u16 {
+fn default_requote_threshold_bps() -> u16 {
     1
 }
 
-fn default_min_edge() -> u16 {
+fn default_min_edge_bps() -> u16 {
     1
 }
 
 impl Default for StrategyConfig {
     fn default() -> Self {
         Self {
-            spread_ticks: default_spread_ticks(),
-            order_size: default_order_size(),
+            tick_size_bps: default_tick_size_bps(),
+            half_spread_bps: default_half_spread_bps(),
+            quote_size_shares: default_quote_size_shares(),
             num_levels: default_num_levels(),
             skew_factor: default_skew_factor(),
-            requote_threshold: default_requote_threshold(),
-            min_edge_ticks: default_min_edge(),
+            requote_threshold_bps: default_requote_threshold_bps(),
+            min_edge_bps: default_min_edge_bps(),
         }
     }
 }
@@ -152,7 +161,7 @@ impl Default for StrategyConfig {
 /// Risk configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskConfig {
-    /// Maximum position size (micro USDC).
+    /// Maximum position size (micro-shares).
     #[serde(default = "default_max_position")]
     pub max_position: i64,
 

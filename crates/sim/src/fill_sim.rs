@@ -4,7 +4,7 @@
 //! Key principle: we only get filled when the market actually trades
 //! at or through our price level.
 
-use mtrader_core::{Side, Size, Tick};
+use mtrader_core::{ClientOrderId, Side, Size, Tick};
 use mtrader_execution::{Order, OrderState};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ pub struct SimulatedFill {
     pub order_id: String,
     /// Fill price (tick)
     pub price_tick: Tick,
-    /// Fill size (centishares)
+    /// Fill size (micro-shares)
     pub size: Size,
     /// Fee for this fill (micro-USDC)
     pub fee_micro_usdc: i64,
@@ -74,15 +74,25 @@ struct PendingOrder {
     ack_at_ns: u64,
     /// When a cancel request will be processed (if any)
     cancel_at_ns: Option<u64>,
+    /// Estimated queue ahead at price (micro-shares)
+    queue_ahead: Size,
+}
+
+/// Live order with queue tracking.
+#[derive(Debug, Clone)]
+struct LiveOrder {
+    order: Order,
+    /// Remaining queue ahead at price
+    queue_ahead: Size,
 }
 
 /// Fill simulator for paper trading.
 pub struct FillSimulator {
     config: FillSimConfig,
     /// Orders pending acknowledgment
-    pending_orders: HashMap<String, PendingOrder>,
+    pending_orders: HashMap<ClientOrderId, PendingOrder>,
     /// Live orders that can be filled
-    live_orders: HashMap<String, Order>,
+    live_orders: HashMap<String, LiveOrder>,
     /// Orders pending cancel
     pending_cancels: HashMap<String, u64>,
     /// RNG for probabilistic fills
@@ -104,7 +114,7 @@ impl FillSimulator {
     }
 
     /// Submit a new order.
-    pub fn submit_order(&mut self, mut order: Order, now_ns: u64) -> String {
+    pub fn submit_order(&mut self, mut order: Order, queue_ahead: Size, now_ns: u64) -> String {
         let order_id = format!("sim-{}", self.next_order_id);
         self.next_order_id += 1;
 
@@ -116,6 +126,7 @@ impl FillSimulator {
                 order,
                 ack_at_ns: now_ns + self.config.order_ack_latency_ns,
                 cancel_at_ns: None,
+                queue_ahead,
             },
         );
 
@@ -147,11 +158,17 @@ impl FillSimulator {
             if let Some(pending) = self.pending_orders.remove(&client_id) {
                 let order_id = pending.order.order_id.clone();
                 events.push(SimEvent::OrderAcked {
-                    client_order_id: client_id,
+                    client_order_id: client_id.clone(),
                     order_id: order_id.clone(),
                     timestamp_ns: pending.ack_at_ns,
                 });
-                self.live_orders.insert(order_id, pending.order);
+                self.live_orders.insert(
+                    order_id,
+                    LiveOrder {
+                        order: pending.order,
+                        queue_ahead: pending.queue_ahead,
+                    },
+                );
             }
         }
 
@@ -192,19 +209,19 @@ impl FillSimulator {
         let order_ids: Vec<_> = self.live_orders.keys().cloned().collect();
 
         for order_id in order_ids {
-            if let Some(order) = self.live_orders.get_mut(&order_id) {
+            if let Some(live_order) = self.live_orders.get_mut(&order_id) {
                 // Skip if pending cancel
                 if self.pending_cancels.contains_key(&order_id) {
                     continue;
                 }
 
                 if let Some(fill) =
-                    self.try_fill(order, trade_price_tick, trade_size, trade_side, timestamp_ns)
+                    self.try_fill(live_order, trade_price_tick, trade_size, trade_side, timestamp_ns)
                 {
                     fills.push(fill);
 
                     // Remove if fully filled
-                    if order.remaining_size == 0 {
+                    if live_order.order.remaining_size == 0 {
                         self.live_orders.remove(&order_id);
                     }
                 }
@@ -216,12 +233,13 @@ impl FillSimulator {
 
     fn try_fill(
         &mut self,
-        order: &mut Order,
+        live_order: &mut LiveOrder,
         trade_price: Tick,
         trade_size: Size,
         trade_side: Side,
         timestamp_ns: u64,
     ) -> Option<SimulatedFill> {
+        let order = &mut live_order.order;
         // Check if trade could fill our order
         let could_fill = match order.side {
             Side::Buy => {
@@ -244,10 +262,19 @@ impl FillSimulator {
             Side::Sell => trade_price > order.price_tick,
         };
 
+        let mut available_trade_size = trade_size;
+        if trade_price == order.price_tick && live_order.queue_ahead > 0 {
+            let consumed = trade_size.min(live_order.queue_ahead);
+            live_order.queue_ahead -= consumed;
+            if consumed >= trade_size {
+                return None;
+            }
+            available_trade_size = trade_size - consumed;
+        }
+
         let should_fill = if price_through && self.config.fill_on_through {
             true
         } else {
-            // At touch - probabilistic based on queue position
             self.rng.gen::<f64>() < self.config.fill_probability_at_touch
         };
 
@@ -257,7 +284,7 @@ impl FillSimulator {
 
         // Calculate fill size
         let max_fill_from_trade =
-            (trade_size as f64 * self.config.max_partial_fill_ratio) as Size;
+            (available_trade_size as f64 * self.config.max_partial_fill_ratio) as Size;
         let fill_size = order.remaining_size.min(max_fill_from_trade).max(1);
 
         // Update order
@@ -283,20 +310,22 @@ impl FillSimulator {
 
     /// Calculate fee using parabolic model.
     fn calculate_fee(&self, price_tick: Tick, size: Size) -> i64 {
-        let price_pct = price_tick as u64;
-        let complement_pct = 100 - price_pct;
+        let price_bps = price_tick as u64;
+        let complement_bps = 10000 - price_bps;
+        let numerator = self.config.fee_rate_bps as u64 * price_bps * complement_bps * size;
+        let denominator = 16000u64 * 10000u64 * 10000u64;
 
-        (self.config.fee_rate_bps as u64 * price_pct * complement_pct * size / 100_000_000) as i64
+        (numerator / denominator) as i64
     }
 
     /// Get all live orders.
     pub fn live_orders(&self) -> impl Iterator<Item = &Order> {
-        self.live_orders.values()
+        self.live_orders.values().map(|live| &live.order)
     }
 
     /// Get a specific order.
     pub fn get_order(&self, order_id: &str) -> Option<&Order> {
-        self.live_orders.get(order_id)
+        self.live_orders.get(order_id).map(|live| &live.order)
     }
 }
 
@@ -304,7 +333,7 @@ impl FillSimulator {
 #[derive(Debug, Clone)]
 pub enum SimEvent {
     OrderAcked {
-        client_order_id: String,
+        client_order_id: ClientOrderId,
         order_id: String,
         timestamp_ns: u64,
     },
@@ -314,7 +343,7 @@ pub enum SimEvent {
         timestamp_ns: u64,
     },
     OrderRejected {
-        client_order_id: String,
+        client_order_id: ClientOrderId,
         reason: String,
         timestamp_ns: u64,
     },
@@ -328,7 +357,7 @@ mod tests {
 
     fn make_order(side: Side, tick: Tick, size: Size) -> Order {
         Order::new(
-            "client-1".into(),
+            ClientOrderId("client-1".into()),
             "asset-123".into(),
             side,
             tick,
@@ -346,8 +375,8 @@ mod tests {
             ..Default::default()
         });
 
-        let order = make_order(Side::Buy, 50, 100_000);
-        let _order_id = sim.submit_order(order, 0);
+        let order = make_order(Side::Buy, 5000, 100_000);
+        let _order_id = sim.submit_order(order, 0, 0);
 
         // Before latency
         let events = sim.advance(50);
@@ -367,12 +396,12 @@ mod tests {
             ..Default::default()
         });
 
-        let order = make_order(Side::Buy, 50, 100_000);
-        sim.submit_order(order, 0);
+        let order = make_order(Side::Buy, 5000, 100_000);
+        sim.submit_order(order, 0, 0);
         sim.advance(0);
 
         // Trade at our price (touch)
-        let fills = sim.on_trade(50, 200_000, Side::Sell, 100);
+        let fills = sim.on_trade(5000, 200_000, Side::Sell, 100);
         assert!(!fills.is_empty());
     }
 
@@ -385,12 +414,12 @@ mod tests {
             ..Default::default()
         });
 
-        let order = make_order(Side::Buy, 50, 100_000);
-        sim.submit_order(order, 0);
+        let order = make_order(Side::Buy, 5000, 100_000);
+        sim.submit_order(order, 0, 0);
         sim.advance(0);
 
         // Trade through our price
-        let fills = sim.on_trade(48, 200_000, Side::Sell, 100);
+        let fills = sim.on_trade(4800, 200_000, Side::Sell, 100);
         assert!(!fills.is_empty());
     }
 
@@ -402,12 +431,12 @@ mod tests {
             ..Default::default()
         });
 
-        let order = make_order(Side::Buy, 50, 100_000);
-        sim.submit_order(order, 0);
+        let order = make_order(Side::Buy, 5000, 100_000);
+        sim.submit_order(order, 0, 0);
         sim.advance(0);
 
         // Trade is a buy (same side) - shouldn't fill us
-        let fills = sim.on_trade(50, 200_000, Side::Buy, 100);
+        let fills = sim.on_trade(5000, 200_000, Side::Buy, 100);
         assert!(fills.is_empty());
     }
 
@@ -419,8 +448,8 @@ mod tests {
             ..Default::default()
         });
 
-        let order = make_order(Side::Buy, 50, 100_000);
-        let _order_id = sim.submit_order(order.clone(), 0);
+        let order = make_order(Side::Buy, 5000, 100_000);
+        let _order_id = sim.submit_order(order.clone(), 0, 0);
         let events = sim.advance(0);
         let order_id = match &events[0] {
             SimEvent::OrderAcked { order_id, .. } => order_id.clone(),

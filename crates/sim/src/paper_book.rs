@@ -14,6 +14,8 @@ pub struct PaperOrder {
     pub price_tick: Tick,
     pub size: Size,
     pub timestamp_ns: u64,
+    /// Estimated queue ahead at time of posting (micro-shares)
+    pub queue_ahead: Size,
 }
 
 /// Paper order book that tracks both market state and our orders.
@@ -52,6 +54,21 @@ impl PaperBook {
             Side::Sell => self.our_asks.entry(order.price_tick).or_default(),
         };
         orders.push(order);
+    }
+
+    /// Estimate queue ahead for a new order at a tick.
+    pub fn estimate_queue_ahead(&self, side: Side, tick: Tick) -> Size {
+        let snapshot_size = match side {
+            Side::Buy => self.market_book.bid_size_at(tick).unwrap_or(0),
+            Side::Sell => self.market_book.ask_size_at(tick).unwrap_or(0),
+        };
+        let our_size: Size = self
+            .our_orders_at(side, tick)
+            .iter()
+            .map(|o| o.size)
+            .sum();
+
+        snapshot_size.saturating_sub(our_size)
     }
 
     /// Remove our order from the paper book.
@@ -161,14 +178,15 @@ mod tests {
         let order = PaperOrder {
             order_id: "order-1".into(),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
+            queue_ahead: 0,
         };
 
         book.add_order(order.clone());
         assert_eq!(book.our_order_count(), 1);
-        assert_eq!(book.our_best_bid(), Some(50));
+        assert_eq!(book.our_best_bid(), Some(5000));
 
         let removed = book.remove_order("order-1");
         assert!(removed.is_some());
@@ -183,18 +201,20 @@ mod tests {
         book.add_order(PaperOrder {
             order_id: "bid-1".into(),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
+            queue_ahead: 0,
         });
 
         // Add ask at 52 - no self trade
         book.add_order(PaperOrder {
             order_id: "ask-1".into(),
             side: Side::Sell,
-            price_tick: 52,
+            price_tick: 5200,
             size: 100_000,
             timestamp_ns: 2000,
+            queue_ahead: 0,
         });
 
         assert!(!book.would_self_trade());
@@ -203,9 +223,10 @@ mod tests {
         book.add_order(PaperOrder {
             order_id: "ask-2".into(),
             side: Side::Sell,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 3000,
+            queue_ahead: 0,
         });
 
         assert!(book.would_self_trade());
@@ -218,14 +239,15 @@ mod tests {
         book.add_order(PaperOrder {
             order_id: "order-1".into(),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
+            queue_ahead: 0,
         });
 
         book.update_order_size("order-1", 50_000);
 
-        let orders = book.our_orders_at(Side::Buy, 50);
+        let orders = book.our_orders_at(Side::Buy, 5000);
         assert_eq!(orders[0].size, 50_000);
     }
 }

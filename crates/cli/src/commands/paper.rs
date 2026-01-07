@@ -6,12 +6,13 @@ use mtrader_book::ArrayBook;
 use mtrader_core::clock::MonotonicClock;
 use mtrader_core::events::CoreEvent;
 use mtrader_core::health::{SafeModeReason, SystemHealth};
-use mtrader_core::Side;
+use mtrader_core::{ClientOrderId, OrderReason, Side};
 use mtrader_gateway::{WsClient, WsMessage};
 use mtrader_recorder::EventRecorder;
 use mtrader_risk::{CircuitBreaker, PnLTracker, Position, PositionLimits};
 use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, PaperOrder};
 use mtrader_strategy::{MakerMMConfig, MakerMMStrategy, Strategy, StrategyAction, StrategyContext};
+use mtrader_execution::{Order, OrderType};
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -42,7 +43,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
         max_position: config.risk.max_position,
         max_notional: config.risk.max_position as u64 * 2,
         max_open_orders: config.risk.max_open_orders,
-        max_order_size: config.strategy.order_size as i64,
+        max_order_size: config.strategy.quote_size_shares as i64,
     };
 
     // Initialize fill simulator
@@ -54,12 +55,12 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
     // Initialize strategy
     let strategy_config = MakerMMConfig {
-        spread_ticks: config.strategy.spread_ticks,
-        order_size: config.strategy.order_size as i64,
+        spread_ticks: config.strategy.half_spread_bps,
+        order_size: config.strategy.quote_size_shares as i64,
         num_levels: config.strategy.num_levels,
         skew_factor: config.strategy.skew_factor,
-        requote_threshold_ticks: config.strategy.requote_threshold,
-        min_edge_ticks: config.strategy.min_edge_ticks,
+        requote_threshold_ticks: config.strategy.requote_threshold_bps,
+        min_edge_ticks: config.strategy.min_edge_bps,
     };
     let mut strategy = MakerMMStrategy::new(strategy_config);
 
@@ -207,16 +208,19 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                 let sim_events = fill_sim.advance(clock.now_ns());
                 for sim_event in sim_events {
                     match sim_event {
-                        mtrader_sim::SimEvent::OrderAcked(order_id) => {
+                        mtrader_sim::SimEvent::OrderAcked { order_id, .. } => {
                             info!(order_id = order_id, "PAPER ORDER ACKED");
                         }
-                        mtrader_sim::SimEvent::OrderCancelled(order_id) => {
+                        mtrader_sim::SimEvent::OrderCancelled { order_id, .. } => {
                             info!(order_id = order_id, "PAPER ORDER CANCELLED");
                             paper_book.remove_order(&order_id);
                         }
-                        mtrader_sim::SimEvent::OrderRejected(order_id, reason) => {
-                            warn!(order_id = order_id, reason = reason, "PAPER ORDER REJECTED");
-                            paper_book.remove_order(&order_id);
+                        mtrader_sim::SimEvent::OrderRejected { client_order_id, reason, .. } => {
+                            warn!(
+                                client_order_id = %client_order_id,
+                                reason = reason,
+                                "PAPER ORDER REJECTED"
+                            );
                         }
                     }
                 }
@@ -241,24 +245,29 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                             // Check limits
                             if limits.check_order(side, size, &position).is_ok() {
                                 order_counter += 1;
-                                let order_id = format!("paper-{}", order_counter);
+                                let client_order_id = ClientOrderId(format!("paper-{}", order_counter));
 
                                 info!(
-                                    order_id = order_id,
+                                    order_id = %client_order_id,
                                     side = ?side,
                                     price = price_tick,
                                     size = size,
                                     "PAPER ORDER PLACED"
                                 );
 
-                                // Submit to simulator
-                                fill_sim.submit_order(
-                                    order_id.clone(),
+                                let now_ns = clock.now_ns();
+                                let order = Order::new(
+                                    client_order_id,
+                                    market.to_string(),
                                     side,
                                     price_tick,
                                     size,
-                                    clock.now_ns(),
+                                    OrderType::Limit,
+                                    OrderReason::MakerQuote,
+                                    now_ns,
                                 );
+                                let queue_ahead = paper_book.estimate_queue_ahead(side, price_tick);
+                                let order_id = fill_sim.submit_order(order, queue_ahead, now_ns);
 
                                 // Add to paper book
                                 paper_book.add_order(PaperOrder {
@@ -266,14 +275,15 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                                     side,
                                     price_tick,
                                     size,
-                                    timestamp_ns: clock.now_ns(),
+                                    timestamp_ns: now_ns,
+                                    queue_ahead,
                                 });
                             }
                         }
 
                         StrategyAction::CancelOrder { order_id, .. } => {
-                            info!(order_id = order_id, "PAPER CANCEL");
-                            fill_sim.cancel_order(&order_id, clock.now_ns());
+                            info!(order_id = %order_id, "PAPER CANCEL");
+                            fill_sim.cancel_order(&order_id.0, clock.now_ns());
                         }
 
                         StrategyAction::CancelAll { .. } => {
