@@ -223,7 +223,7 @@ mod tests {
     fn make_book_event(ts: u64) -> CoreEvent {
         CoreEvent::BookUpdate(BookUpdateEvent {
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             new_size: 1000,
             ts_exchange_ms: ts / 1_000_000,
             ts_recv_mono_ns: ts,
@@ -234,7 +234,7 @@ mod tests {
     fn make_trade_event(ts: u64) -> CoreEvent {
         CoreEvent::Trade(TradeEvent {
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100,
             trade_id: "trade-1".into(),
             ts_exchange_ms: ts / 1_000_000,

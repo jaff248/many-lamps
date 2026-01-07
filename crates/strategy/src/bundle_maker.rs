@@ -9,8 +9,8 @@
 //! parabolic fees that peak at mid prices.
 
 use crate::traits::{Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{OrderReason, Side, Size, Tick};
-use mtrader_execution::OrderType;
+use mtrader_core::{OrderReason, Side, Size, Tick, MAX_TICK};
+use mtrader_execution::{OrderKind, OrderType};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for bundle maker strategy.
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct BundleMakerConfig {
     /// Minimum arbitrage profit after fees (micro-USDC)
     pub min_profit_micro_usdc: i64,
-    /// Order size for each leg (centishares)
+    /// Order size for each leg (shares)
     pub leg_size: Size,
     /// Maximum concurrent arb positions
     pub max_concurrent_arbs: usize,
@@ -32,7 +32,7 @@ impl Default for BundleMakerConfig {
     fn default() -> Self {
         Self {
             min_profit_micro_usdc: 100_000, // $0.10 minimum profit
-            leg_size: 1_000_000, // $100 notional per leg
+            leg_size: 1_000_000, // 1 share per leg
             max_concurrent_arbs: 3,
             fee_rate_bps: 1000, // 15-min markets
             maker_only: true,
@@ -47,9 +47,9 @@ pub struct ArbPosition {
     pub yes_asset_id: String,
     /// NO asset ID
     pub no_asset_id: String,
-    /// YES position (centishares)
+    /// YES position (shares)
     pub yes_size: Size,
-    /// NO position (centishares)
+    /// NO position (shares)
     pub no_size: Size,
     /// Entry tick for YES
     pub yes_entry_tick: Tick,
@@ -60,14 +60,14 @@ pub struct ArbPosition {
 }
 
 impl ArbPosition {
-    /// Calculate the combined entry cost in ticks (should be < 100).
+    /// Calculate the combined entry cost in ticks (should be < 10000).
     pub fn combined_entry_ticks(&self) -> u16 {
         self.yes_entry_tick + self.no_entry_tick
     }
 
     /// Calculate profit potential in ticks.
     pub fn profit_ticks(&self) -> i16 {
-        100 - self.combined_entry_ticks() as i16
+        MAX_TICK as i16 - self.combined_entry_ticks() as i16
     }
 }
 
@@ -103,15 +103,10 @@ impl BundleMakerStrategy {
 
     /// Calculate fee for a trade (parabolic model for 15-min markets).
     fn calculate_fee(&self, price_tick: Tick, size: Size) -> i64 {
-        // fee = (fee_rate_bps / 10000) * price * (1 - price) * size
-        // price is tick/100, size is in centishares
-        let price_pct = price_tick as u64;
-        let complement_pct = 100 - price_pct;
-
-        // fee_micro = fee_rate_bps * price_pct * complement_pct * size / 10000 / 100 / 100
-        // Simplified: fee_rate_bps * price_pct * complement_pct * size / 100_000_000
-        let fee_micro = (self.config.fee_rate_bps as u64 * price_pct * complement_pct * size)
-            / 100_000_000;
+        let price = price_tick as u128;
+        let complement = (MAX_TICK - price_tick) as u128;
+        let fee_micro = (self.config.fee_rate_bps as u128 * price * complement * size as u128)
+            / (16000u128 * 10000u128 * 10000u128);
 
         fee_micro as i64
     }
@@ -122,20 +117,19 @@ impl BundleMakerStrategy {
         yes_ask: Tick,
         no_ask: Tick,
     ) -> Option<i64> {
-        // Combined ask should be < 100 for arb
+        // Combined ask should be < 10000 for arb
         let combined = yes_ask as u16 + no_ask as u16;
-        if combined >= 100 {
+        if combined >= MAX_TICK {
             return None;
         }
 
         // Calculate gross profit (in ticks)
-        let gross_profit_ticks = 100 - combined as i16;
+        let gross_profit_ticks = MAX_TICK as i16 - combined as i16;
 
         // Convert to micro-USDC
-        // Profit per share = gross_profit_ticks / 100 dollars
-        // For leg_size centishares: profit = gross_profit_ticks * leg_size / 100 / 100 * 1_000_000
-        // = gross_profit_ticks * leg_size * 100
-        let gross_profit_micro = gross_profit_ticks as i64 * self.config.leg_size as i64 * 100;
+        // Profit per share = gross_profit_ticks / 10000 dollars
+        // For leg_size micro-shares: profit = gross_profit_ticks * leg_size / 10000
+        let gross_profit_micro = (gross_profit_ticks as i64 * self.config.leg_size as i64) / 10000;
 
         // Calculate fees for both legs
         let yes_fee = self.calculate_fee(yes_ask, self.config.leg_size);
@@ -163,16 +157,20 @@ impl BundleMakerStrategy {
 
             actions.push(StrategyAction::PlaceOrder {
                 side: Side::Buy,
-                tick: yes_bid,
-                size: self.config.leg_size,
+                kind: OrderKind::Limit {
+                    price_tick: yes_bid,
+                    size_shares: self.config.leg_size,
+                },
                 order_type: OrderType::Limit,
                 reason: OrderReason::BundleArb,
             });
 
             actions.push(StrategyAction::PlaceOrder {
                 side: Side::Buy,
-                tick: no_bid,
-                size: self.config.leg_size,
+                kind: OrderKind::Limit {
+                    price_tick: no_bid,
+                    size_shares: self.config.leg_size,
+                },
                 order_type: OrderType::Limit,
                 reason: OrderReason::BundleArb,
             });
@@ -180,16 +178,20 @@ impl BundleMakerStrategy {
             // Aggressive: take the ask
             actions.push(StrategyAction::PlaceOrder {
                 side: Side::Buy,
-                tick: yes_ask,
-                size: self.config.leg_size,
+                kind: OrderKind::Limit {
+                    price_tick: yes_ask,
+                    size_shares: self.config.leg_size,
+                },
                 order_type: OrderType::Limit,
                 reason: OrderReason::BundleArb,
             });
 
             actions.push(StrategyAction::PlaceOrder {
                 side: Side::Buy,
-                tick: no_ask,
-                size: self.config.leg_size,
+                kind: OrderKind::Limit {
+                    price_tick: no_ask,
+                    size_shares: self.config.leg_size,
+                },
                 order_type: OrderType::Limit,
                 reason: OrderReason::BundleArb,
             });
@@ -293,15 +295,15 @@ mod tests {
             "no".to_string(),
         );
 
-        // At 50 cents (tick 50), fee should be maximum
-        // fee = 0.10 * 0.50 * 0.50 * 1_000_000 centishares = 25_000_000 micro-USDC = $25
-        let fee = strategy.calculate_fee(50, 1_000_000);
-        assert!((fee - 25_000_000).abs() < 1000); // Allow small rounding
+        // At 50 cents (tick 5000), fee should be maximum
+        // fee = 0.0625 * 0.50 * 0.50 * 1_000_000 micro-shares = 15_625 micro
+        let fee = strategy.calculate_fee(5000, 1_000_000);
+        assert!((fee - 15_625).abs() < 1000); // Allow small rounding
 
         // At 10 cents, fee should be lower
-        // fee = 0.10 * 0.10 * 0.90 * 1_000_000 = 9_000_000 micro-USDC = $9
-        let fee = strategy.calculate_fee(10, 1_000_000);
-        assert!((fee - 9_000_000).abs() < 1000);
+        // fee = 0.0625 * 0.10 * 0.90 * 1_000_000 = 5_625 micro
+        let fee = strategy.calculate_fee(1000, 1_000_000);
+        assert!((fee - 5_625).abs() < 1000);
     }
 
     #[test]
@@ -318,22 +320,22 @@ mod tests {
             "no".to_string(),
         );
 
-        // YES ask = 40, NO ask = 55 -> combined = 95 -> 5 tick profit
-        // Gross profit = 5 * 1_000_000 * 100 / 10000 = 5_000_000 micro ($5)
+        // YES ask = 4000, NO ask = 5500 -> combined = 9500 -> 500 tick profit
+        // Gross profit = 500 * 1_000_000 / 10000 = 50_000 micro ($0.05)
         // But we need to subtract fees...
-        let profit = strategy.check_arb_opportunity(40, 55);
+        let profit = strategy.check_arb_opportunity(4000, 5500);
 
         // This might not be profitable after fees, depending on exact calculation
         // The test validates the logic runs
 
-        // Clearly profitable: YES = 30, NO = 30 -> combined = 60 -> 40 tick profit
-        let profit = strategy.check_arb_opportunity(30, 30);
+        // Clearly profitable: YES = 3000, NO = 3000 -> combined = 6000 -> 4000 tick profit
+        let profit = strategy.check_arb_opportunity(3000, 3000);
         assert!(profit.is_some());
         assert!(profit.unwrap() > 0);
     }
 
     #[test]
-    fn test_no_arb_when_combined_above_100() {
+    fn test_no_arb_when_combined_above_10000() {
         let strategy = BundleMakerStrategy::new(
             "test".to_string(),
             BundleMakerConfig::default(),
@@ -341,9 +343,9 @@ mod tests {
             "no".to_string(),
         );
 
-        // Combined ask >= 100, no arb
-        assert!(strategy.check_arb_opportunity(55, 50).is_none());
-        assert!(strategy.check_arb_opportunity(50, 50).is_none());
-        assert!(strategy.check_arb_opportunity(60, 45).is_none());
+        // Combined ask >= 10000, no arb
+        assert!(strategy.check_arb_opportunity(5500, 5000).is_none());
+        assert!(strategy.check_arb_opportunity(5000, 5000).is_none());
+        assert!(strategy.check_arb_opportunity(6000, 4500).is_none());
     }
 }

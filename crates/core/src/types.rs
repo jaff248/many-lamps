@@ -7,9 +7,12 @@ use std::fmt;
 /// e.g., 0.55 = 5500, 0.01 = 100, 1.00 = 10000
 pub type Tick = u16;
 
-/// Size in micro-units (10^-6), matching USDC 6 decimals
-/// 1.0 share = 1_000_000 micro-units
+/// Size in micro-shares (10^-6 outcome tokens)
+/// 1.0 share = 1_000_000 micro-shares
 pub type Size = u64;
+
+/// USDC amount in micro-units (10^-6)
+pub type UsdcAmount = u64;
 
 /// Maximum valid tick (price = 1.0000)
 pub const MAX_TICK: Tick = 10000;
@@ -158,7 +161,9 @@ pub fn parse_price_to_tick_snap(price: f64, tick_size: Tick) -> Tick {
         return raw_tick;
     }
     // Snap to nearest valid tick
-    (raw_tick / tick_size) * tick_size
+    let tick_size_u32 = tick_size as u32;
+    let half = tick_size_u32 / 2;
+    (((raw_tick as u32 + half) / tick_size_u32) * tick_size_u32) as Tick
 }
 
 /// Convert tick to price string for API/hashing
@@ -167,7 +172,7 @@ pub fn tick_to_price_string(tick: Tick) -> String {
     format!("{:.4}", price).trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Parse size string to micro-units
+/// Parse size string to micro-shares
 /// "30" → 30_000_000, "1.5" → 1_500_000
 pub fn parse_size(s: &str) -> Result<Size, SizeParseError> {
     let f: f64 = s.parse().map_err(|_| SizeParseError::InvalidFormat(s.to_string()))?;
@@ -177,7 +182,7 @@ pub fn parse_size(s: &str) -> Result<Size, SizeParseError> {
     Ok((f * SIZE_DECIMALS as f64).round() as Size)
 }
 
-/// Convert micro-units to size string
+/// Convert micro-shares to size string
 pub fn size_to_string(size: Size) -> String {
     let f = size as f64 / SIZE_DECIMALS as f64;
     format!("{}", f)
@@ -220,15 +225,15 @@ mod tests {
 
     #[test]
     fn test_parse_price_strict_invalid_tick() {
-        // 0.555 = tick 5550, which is not divisible by 100
-        let result = parse_price_to_tick_strict("0.555", 100);
+        // 0.551 = tick 5510, which is not divisible by 100
+        let result = parse_price_to_tick_strict("0.551", 100);
         assert!(matches!(result, Err(TickParseError::InvalidTick { .. })));
     }
 
     #[test]
     fn test_parse_price_snap() {
         // Snapping rounds to nearest valid tick
-        assert_eq!(parse_price_to_tick_snap(0.555, 100), 5600); // 5550 → 5500
+        assert_eq!(parse_price_to_tick_snap(0.555, 100), 5600); // 5550 → 5600
         assert_eq!(parse_price_to_tick_snap(0.554, 100), 5500);
         assert_eq!(parse_price_to_tick_snap(0.556, 100), 5600);
     }

@@ -198,6 +198,7 @@ impl BookSync {
     pub fn on_tick_size_change(&mut self, new_tick_size: Tick) -> SyncResult {
         // Tick size change requires full resnapshot
         self.book.set_tick_size(new_tick_size);
+        self.book.clear();
         self.state = BookSyncState::Syncing;
         
         SyncResult::NeedResnapshot {

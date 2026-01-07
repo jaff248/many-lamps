@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 /// Position limit configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionLimits {
-    /// Maximum position per asset (centishares)
+    /// Maximum position per asset (micro-shares)
     pub max_position_per_asset: i64,
-    /// Maximum gross position across all assets (centishares)
+    /// Maximum gross position across all assets (micro-shares)
     pub max_gross_position: i64,
-    /// Maximum order size (centishares)
+    /// Maximum order size (micro-shares)
     pub max_order_size: u64,
-    /// Minimum order size (centishares)
+    /// Minimum order size (micro-shares)
     pub min_order_size: u64,
-    /// Maximum daily volume (centishares)
+    /// Maximum daily volume (micro-shares)
     pub max_daily_volume: u64,
     /// Maximum open orders per side
     pub max_open_orders_per_side: usize,
@@ -22,16 +22,16 @@ pub struct PositionLimits {
 impl Default for PositionLimits {
     fn default() -> Self {
         Self {
-            // $1000 max position per asset at mid price
-            max_position_per_asset: 200_000_000, // 2M centishares
-            // $5000 max gross position
-            max_gross_position: 1_000_000_000, // 10M centishares
-            // $100 max single order
-            max_order_size: 20_000_000, // 200k centishares
-            // $1 min order
-            min_order_size: 200_000, // 2k centishares
-            // $10000 daily volume limit
-            max_daily_volume: 2_000_000_000, // 20M centishares
+            // 200 shares max position per asset
+            max_position_per_asset: 200_000_000, // 200 shares
+            // 1000 shares max gross position
+            max_gross_position: 1_000_000_000, // 1000 shares
+            // 20 shares max single order
+            max_order_size: 20_000_000, // 20 shares
+            // 0.2 shares min order
+            min_order_size: 200_000, // 0.2 shares
+            // 2000 shares daily volume limit
+            max_daily_volume: 2_000_000_000, // 2000 shares
             // Max 5 open orders per side
             max_open_orders_per_side: 5,
         }

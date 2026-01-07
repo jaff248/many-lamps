@@ -9,9 +9,9 @@ reconnect_delay_ms = 1000
 request_timeout_ms = 5000
 
 [strategy]
-# Spread in ticks (1 tick = 1%)
+# Spread in ticks (1 tick = 0.0001, i.e., 1 bp)
 spread_ticks = 2
-# Order size in micro USDC (100_000_000 = $100)
+# Order size in micro shares (100_000_000 = 100 shares)
 order_size = 100000000
 # Number of price levels to quote
 num_levels = 3
@@ -23,7 +23,7 @@ requote_threshold = 1
 min_edge_ticks = 1
 
 [risk]
-# Maximum position in micro USDC ($1000)
+# Maximum position in micro shares (1000 shares)
 max_position = 1000000000
 # Maximum daily loss in micro USDC ($100)
 max_daily_loss = 100000000
@@ -31,7 +31,7 @@ max_daily_loss = 100000000
 max_drawdown_pct = 0.10
 # Maximum open orders
 max_open_orders = 20
-# Fee rate in basis points (1000 = 10% for 15-min markets)
+# Fee rate in basis points (1000 = 0.0625 coefficient for 15-min markets)
 fee_rate_bps = 1000
 
 [recording]

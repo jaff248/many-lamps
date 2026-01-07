@@ -262,7 +262,8 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                                 // Add to paper book
                                 paper_book.add_order(PaperOrder {
-                                    order_id,
+                                    order_id: order_id.clone(),
+                                    client_order_id: mtrader_core::ClientOrderId(order_id),
                                     side,
                                     price_tick,
                                     size,

@@ -348,7 +348,7 @@ mod tests {
             let events = vec![
                 CoreEvent::BookUpdate(BookUpdateEvent {
                     side: Side::Buy,
-                    price_tick: 50,
+                    price_tick: 5000,
                     new_size: 10000,
                     ts_exchange_ms: 1000,
                     ts_recv_mono_ns: 1000000,
@@ -356,7 +356,7 @@ mod tests {
                 }),
                 CoreEvent::Trade(TradeEvent {
                     side: Side::Sell,
-                    price_tick: 51,
+                    price_tick: 5100,
                     size: 500,
                     trade_id: "trade-1".into(),
                     ts_exchange_ms: 2000,

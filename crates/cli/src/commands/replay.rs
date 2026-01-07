@@ -217,7 +217,8 @@ pub async fn run(
 
                         fill_sim.submit_order(order_id.clone(), side, price_tick, size, current_time);
                         paper_book.add_order(PaperOrder {
-                            order_id,
+                            order_id: order_id.clone(),
+                            client_order_id: mtrader_core::ClientOrderId(order_id),
                             side,
                             price_tick,
                             size,
