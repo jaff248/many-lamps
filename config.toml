@@ -1,0 +1,51 @@
+# MTrader Configuration
+# Polymarket BTC 15-minute market trading system
+
+[gateway]
+ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+rest_url = "https://clob.polymarket.com"
+reconnect_attempts = 5
+reconnect_delay_ms = 1000
+request_timeout_ms = 5000
+
+[strategy]
+# Spread in ticks (1 tick = 1%)
+spread_ticks = 2
+# Order size in micro USDC (100_000_000 = $100)
+order_size = 100000000
+# Number of price levels to quote
+num_levels = 3
+# Position skew factor (0.0 = no skew, 1.0 = full skew)
+skew_factor = 0.5
+# Requote if mid moves more than this many ticks
+requote_threshold = 1
+# Minimum edge in ticks to quote
+min_edge_ticks = 1
+
+[risk]
+# Maximum position in micro USDC ($1000)
+max_position = 1000000000
+# Maximum daily loss in micro USDC ($100)
+max_daily_loss = 100000000
+# Maximum drawdown percentage
+max_drawdown_pct = 0.10
+# Maximum open orders
+max_open_orders = 20
+# Fee rate in basis points (1000 = 10% for 15-min markets)
+fee_rate_bps = 1000
+
+[recording]
+output_dir = "data/recordings"
+record_raw_frames = false
+record_events = true
+max_events_per_file = 1000000
+
+[safe_mode]
+# Always start in safe mode (no real orders)
+enabled = true
+# Enter safe mode after this many consecutive errors
+max_consecutive_errors = 3
+# Enter safe mode if book drifts more than this many ticks
+book_drift_threshold = 5
+# Enter safe mode if message latency exceeds this (ms)
+max_message_latency_ms = 5000

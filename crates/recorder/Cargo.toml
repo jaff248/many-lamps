@@ -1,0 +1,31 @@
+[package]
+name = "mtrader-recorder"
+version = "0.1.0"
+edition = "2021"
+description = "Event recording and Parquet storage for MTrader"
+
+[dependencies]
+mtrader-core = { path = "../core" }
+
+# Parquet/Arrow for columnar storage
+parquet = { workspace = true }
+arrow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Compression
+flate2 = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"

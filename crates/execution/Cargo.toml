@@ -1,0 +1,23 @@
+[package]
+name = "mtrader-execution"
+version = "0.1.0"
+edition = "2021"
+description = "Order execution and state management for Polymarket trading"
+
+[dependencies]
+mtrader-core = { path = "../core" }
+mtrader-book = { path = "../book" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

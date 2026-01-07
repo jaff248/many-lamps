@@ -1,0 +1,20 @@
+[package]
+name = "mtrader-strategy"
+version = "0.1.0"
+edition = "2021"
+description = "Trading strategies for Polymarket"
+
+[dependencies]
+mtrader-core = { path = "../core" }
+mtrader-book = { path = "../book" }
+mtrader-execution = { path = "../execution" }
+mtrader-risk = { path = "../risk" }
+
+# Serialization
+serde = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

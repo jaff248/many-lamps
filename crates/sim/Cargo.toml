@@ -1,0 +1,24 @@
+[package]
+name = "mtrader-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Paper trading simulator for Polymarket"
+
+[dependencies]
+mtrader-core = { path = "../core" }
+mtrader-book = { path = "../book" }
+mtrader-execution = { path = "../execution" }
+mtrader-risk = { path = "../risk" }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Random for fill simulation
+rand = "0.8"
+
+[dev-dependencies]

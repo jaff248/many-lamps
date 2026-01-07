@@ -1,0 +1,17 @@
+[package]
+name = "mtrader-risk"
+version = "0.1.0"
+edition = "2021"
+description = "Risk management for Polymarket trading"
+
+[dependencies]
+mtrader-core = { path = "../core" }
+
+# Serialization
+serde = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
