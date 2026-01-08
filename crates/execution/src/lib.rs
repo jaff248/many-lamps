@@ -12,6 +12,6 @@ pub mod self_trade_guard;
 pub mod state_manager;
 
 pub use error::ExecutionError;
-pub use order::{Order, OrderId, OrderState, OrderType};
+pub use order::{Order, OrderId, OrderKind, OrderState, OrderType};
 pub use self_trade_guard::SelfTradeGuard;
 pub use state_manager::OrderStateManager;

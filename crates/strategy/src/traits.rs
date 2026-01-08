@@ -1,8 +1,8 @@
 //! Strategy trait and common types.
 
 use mtrader_book::ArrayBook;
-use mtrader_core::{OrderReason, Side, Size, Tick};
-use mtrader_execution::OrderType;
+use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick};
+use mtrader_execution::{OrderKind, OrderType};
 use mtrader_risk::{PnLSnapshot, Position};
 
 /// Context provided to strategies for decision making.
@@ -28,10 +28,16 @@ pub struct StrategyContext {
     pub mid_tick: Option<Tick>,
     /// Spread in ticks
     pub spread_ticks: Option<u16>,
-    /// Our active bid ticks
-    pub our_bids: Vec<Tick>,
-    /// Our active ask ticks
-    pub our_asks: Vec<Tick>,
+    /// Our active bid orders
+    pub our_bids: Vec<WorkingOrder>,
+    /// Our active ask orders
+    pub our_asks: Vec<WorkingOrder>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkingOrder {
+    pub tick: Tick,
+    pub client_order_id: ClientOrderId,
 }
 
 impl StrategyContext {
@@ -41,19 +47,19 @@ impl StrategyContext {
         asset_id: String,
         position: Position,
         pnl: PnLSnapshot,
-        our_bids: Vec<Tick>,
-        our_asks: Vec<Tick>,
+        our_bids: Vec<WorkingOrder>,
+        our_asks: Vec<WorkingOrder>,
         now_ns: u64,
     ) -> Self {
-        let best_bid = book.best_bid_tick();
-        let best_ask = book.best_ask_tick();
+        let best_bid = book.best_bid();
+        let best_ask = book.best_ask();
         let (best_bid_size, best_ask_size) = match (best_bid, best_ask) {
-            (Some(bid), Some(ask)) => (
-                book.bid_size_at(bid).unwrap_or(0),
-                book.ask_size_at(ask).unwrap_or(0),
+            (Some(_), Some(_)) => (
+                book.best_bid_size().unwrap_or(0),
+                book.best_ask_size().unwrap_or(0),
             ),
-            (Some(bid), None) => (book.bid_size_at(bid).unwrap_or(0), 0),
-            (None, Some(ask)) => (0, book.ask_size_at(ask).unwrap_or(0)),
+            (Some(_), None) => (book.best_bid_size().unwrap_or(0), 0),
+            (None, Some(_)) => (0, book.best_ask_size().unwrap_or(0)),
             (None, None) => (0, 0),
         };
 
@@ -102,21 +108,19 @@ pub enum StrategyAction {
     /// Place a new order
     PlaceOrder {
         side: Side,
-        tick: Tick,
-        size: Size,
+        kind: OrderKind,
         order_type: OrderType,
         reason: OrderReason,
     },
     /// Cancel an existing order
     CancelOrder {
-        order_id: String,
+        client_order_id: ClientOrderId,
         reason: String,
     },
     /// Amend an order (cancel + replace)
     AmendOrder {
-        order_id: String,
-        new_tick: Tick,
-        new_size: Size,
+        client_order_id: ClientOrderId,
+        new_kind: OrderKind,
         reason: String,
     },
     /// No action needed

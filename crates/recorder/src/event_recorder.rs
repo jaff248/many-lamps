@@ -163,18 +163,27 @@ impl Drop for EventRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mtrader_core::events::BookUpdateEvent;
-    use mtrader_core::Side;
+    use mtrader_core::events::{EventTimestamps, MarketDataEvent};
+    use mtrader_core::{MarketId, Side, TokenId};
     use tempfile::tempdir;
 
     fn make_event(ts: u64) -> CoreEvent {
-        CoreEvent::BookUpdate(BookUpdateEvent {
+        let timestamps = EventTimestamps {
+            ts_exchange_ms: (ts / 1_000_000) as i64,
+            ts_recv_mono_ns: ts as i64,
+            ts_process_mono_ns: ts as i64,
+        };
+
+        CoreEvent::MarketData(MarketDataEvent::BookDelta {
+            market_id: MarketId("market".to_string()),
+            token_id: TokenId("token".to_string()),
             side: Side::Buy,
-            price_tick: 50,
+            tick: 5000,
             new_size: 1000,
-            ts_exchange_ms: ts / 1_000_000,
-            ts_recv_mono_ns: ts,
-            ts_process_mono_ns: ts,
+            best_bid: None,
+            best_ask: None,
+            order_hash: "hash".to_string(),
+            timestamps,
         })
     }
 

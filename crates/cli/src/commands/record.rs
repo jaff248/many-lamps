@@ -3,9 +3,9 @@
 use crate::config::Config;
 use anyhow::Result;
 use mtrader_core::clock::MonotonicClock;
-use mtrader_core::events::CoreEvent;
-use mtrader_core::Side;
-use mtrader_gateway::{WsClient, WsMessage};
+use mtrader_core::events::{CoreEvent, EventTimestamps, MarketDataEvent};
+use mtrader_core::{MarketId, Side, TokenId};
+use mtrader_gateway::{ParsedEvent, WsClient, WsConfig};
 use mtrader_recorder::{
     event_recorder::EventRecorderConfig, EventRecorder, FrameRecorder,
 };
@@ -85,11 +85,12 @@ pub async fn run(
 
     // Connect to market
     info!("Connecting to market: {}", market);
-    let mut ws_client = WsClient::new(&config.gateway.ws_url)?;
-
-    // Subscribe to market
-    ws_client.subscribe_book(market).await?;
-    ws_client.subscribe_trades(market).await?;
+    let ws_config = WsConfig {
+        url: config.gateway.ws_url.clone(),
+        ..Default::default()
+    };
+    let ws_client = WsClient::new(ws_config);
+    let (mut frame_rx, _cmd_tx) = ws_client.run(vec![market.to_string()]);
 
     let mut message_count = 0u64;
     let mut book_updates = 0u64;
@@ -99,7 +100,7 @@ pub async fn run(
     loop {
         // Check duration
         if let Some(max_duration) = record_duration {
-            let elapsed_ns = clock.now_ns() - start_time;
+            let elapsed_ns = (clock.now_ns() - start_time).max(0) as u64;
             if elapsed_ns > max_duration.as_nanos() as u64 {
                 info!("Recording duration reached");
                 break;
@@ -107,77 +108,118 @@ pub async fn run(
         }
 
         tokio::select! {
-            msg = ws_client.next_message() => {
-                let msg = match msg {
-                    Ok(Some(m)) => m,
-                    Ok(None) => {
-                        warn!("WebSocket connection closed");
-                        break;
-                    }
+            Some(frame_result) = frame_rx.recv() => {
+                let frame = match frame_result {
+                    Ok(frame) => frame,
                     Err(e) => {
                         error!("WebSocket error: {}", e);
-                        // Try to reconnect
                         tokio::time::sleep(Duration::from_millis(config.gateway.reconnect_delay_ms)).await;
                         continue;
                     }
                 };
 
-                let ts_recv = clock.now_ns();
+                let ts_recv = frame.ts_recv_mono_ns as i64;
                 let wall_time = chrono::Utc::now().timestamp_millis() as u64;
+                let ts_process = clock.now_ns();
                 message_count += 1;
 
-                // Record raw frame
                 if let Some(ref mut rec) = frame_recorder {
-                    // Serialize message to bytes
-                    if let Ok(json) = serde_json::to_vec(&msg) {
-                        let _ = rec.record_raw(ts_recv, wall_time, &json);
-                    }
+                    let _ = rec.record_raw(frame.ts_recv_mono_ns, wall_time, &frame.raw_json);
                 }
 
-                // Process and record event
-                match &msg {
-                    WsMessage::BookUpdate { side, price, size, .. } => {
-                        book_updates += 1;
-                        let side = if *side == "buy" { Side::Buy } else { Side::Sell };
-                        let tick = (*price * 100.0) as u16;
-                        let ts_process = clock.now_ns();
+                for event in frame.events {
+                    match event {
+                        ParsedEvent::Book(book_snapshot) => {
+                            book_updates += 1;
+                            let timestamps = EventTimestamps::new(
+                                book_snapshot.timestamp_ms as i64,
+                                ts_recv,
+                            )
+                            .with_process_time(ts_process);
 
-                        let event = CoreEvent::BookUpdate(mtrader_core::events::BookUpdateEvent {
-                            side,
-                            price_tick: tick,
-                            new_size: *size as i64,
-                            ts_exchange_ms: wall_time,
-                            ts_recv_mono_ns: ts_recv,
-                            ts_process_mono_ns: ts_process,
-                        });
+                            let event = CoreEvent::MarketData(MarketDataEvent::BookSnapshot {
+                                market_id: MarketId(market.to_string()),
+                                token_id: TokenId(book_snapshot.asset_id.clone()),
+                                bids: book_snapshot.bids,
+                                asks: book_snapshot.asks,
+                                tick_size: 0,
+                                snapshot_hash: book_snapshot.hash,
+                                timestamps,
+                            });
 
-                        if let Some(ref mut rec) = event_recorder {
-                            let _ = rec.record(event);
+                            if let Some(ref mut rec) = event_recorder {
+                                let _ = rec.record(event);
+                            }
                         }
-                    }
+                        ParsedEvent::PriceChange(change) => {
+                            for update in change.price_changes {
+                                book_updates += 1;
+                                let timestamps = EventTimestamps::new(
+                                    change.timestamp_ms as i64,
+                                    ts_recv,
+                                )
+                                .with_process_time(ts_process);
 
-                    WsMessage::Trade { side, price, size, id, .. } => {
-                        trades += 1;
-                        let side = if *side == "buy" { Side::Buy } else { Side::Sell };
-                        let tick = (*price * 100.0) as u16;
-                        let ts_process = clock.now_ns();
+                                let event = CoreEvent::MarketData(MarketDataEvent::BookDelta {
+                                    market_id: MarketId(market.to_string()),
+                                    token_id: TokenId(change.asset_id.clone()),
+                                    side: update.side,
+                                    tick: update.price_tick,
+                                    new_size: update.size,
+                                    best_bid: None,
+                                    best_ask: None,
+                                    order_hash: String::new(),
+                                    timestamps,
+                                });
 
-                        let event = CoreEvent::Trade(mtrader_core::events::TradeEvent {
-                            side,
-                            price_tick: tick,
-                            size: *size as i64,
-                            trade_id: id.clone(),
-                            ts_exchange_ms: wall_time,
-                            ts_recv_mono_ns: ts_recv,
-                            ts_process_mono_ns: ts_process,
-                        });
-
-                        if let Some(ref mut rec) = event_recorder {
-                            let _ = rec.record(event);
+                                if let Some(ref mut rec) = event_recorder {
+                                    let _ = rec.record(event);
+                                }
+                            }
                         }
-                    }
+                        ParsedEvent::LastTradePrice(trade) => {
+                            trades += 1;
+                            let timestamps = EventTimestamps::new(
+                                trade.timestamp_ms as i64,
+                                ts_recv,
+                            )
+                            .with_process_time(ts_process);
 
-                    _ => {}
+                            let event = CoreEvent::MarketData(MarketDataEvent::Trade {
+                                market_id: MarketId(market.to_string()),
+                                token_id: TokenId(trade.asset_id.clone()),
+                                side: Side::Buy,
+                                price_tick: trade.price_tick,
+                                size: trade.size_shares,
+                                fee_rate_bps: 0,
+                                timestamps,
+                            });
+
+                            if let Some(ref mut rec) = event_recorder {
+                                let _ = rec.record(event);
+                            }
+                        }
+                        ParsedEvent::TickSizeChange(change) => {
+                            let timestamps = EventTimestamps::new(
+                                change.timestamp_ms as i64,
+                                ts_recv,
+                            )
+                            .with_process_time(ts_process);
+
+                            let event = CoreEvent::MarketData(MarketDataEvent::TickSizeChange {
+                                market_id: MarketId(market.to_string()),
+                                token_id: TokenId(change.asset_id.clone()),
+                                old_tick_size: change.old_tick_bps,
+                                new_tick_size: change.new_tick_bps,
+                                timestamps,
+                            });
+
+                            if let Some(ref mut rec) = event_recorder {
+                                let _ = rec.record(event);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
 

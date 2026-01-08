@@ -4,18 +4,18 @@
 
 use crate::signals::Signal;
 use crate::traits::{Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{OrderReason, Side, Size, Tick};
-use mtrader_execution::OrderType;
+use mtrader_core::{OrderReason, Side, Size, Tick, MAX_TICK};
+use mtrader_execution::{OrderKind, OrderType};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for maker MM strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MakerMMConfig {
-    /// Target half-spread in ticks
+    /// Target half-spread in ticks (bps)
     pub half_spread_ticks: u16,
-    /// Order size in centishares
+    /// Order size in shares
     pub order_size: Size,
-    /// Maximum position (absolute, centishares)
+    /// Maximum position (absolute, shares)
     pub max_position: i64,
     /// Position skew factor (0.0 to 1.0)
     /// Higher = more aggressive skew away from position
@@ -32,8 +32,8 @@ impl Default for MakerMMConfig {
     fn default() -> Self {
         Self {
             half_spread_ticks: 1,
-            order_size: 1_000_000, // $100 at mid price
-            max_position: 5_000_000, // $500 max position
+            order_size: 1_000_000, // 1 share
+            max_position: 5_000_000, // 5 shares max position
             skew_factor: 0.3,
             min_edge_ticks: 1,
             requote_threshold_ticks: 1,
@@ -79,8 +79,9 @@ impl MakerMMStrategy {
             _ => 0,
         };
 
-        let adjusted = mid_tick as i16 + signal_adjustment;
-        adjusted.max(1).min(99) as Tick
+        let adjusted = mid_tick as i32 + signal_adjustment as i32;
+        let max_tick = (MAX_TICK - 1) as i32;
+        adjusted.max(1).min(max_tick) as Tick
     }
 
     /// Calculate position-based skew.
@@ -100,7 +101,8 @@ impl MakerMMStrategy {
     /// Calculate target ask tick.
     fn target_ask(&self, fair_value: Tick, skew: i16) -> Tick {
         let target = fair_value as i16 + self.config.half_spread_ticks as i16 - skew;
-        target.min(99).max(1) as Tick
+        let max_tick = (MAX_TICK - 1) as i16;
+        target.min(max_tick).max(1) as Tick
     }
 
     /// Check if we should quote this side given position.
@@ -163,18 +165,19 @@ impl Strategy for MakerMMStrategy {
         // Check if we need to re-quote bids
         if self.should_quote_side(Side::Buy, ctx.position.net_size) {
             let need_new_bid = ctx.our_bids.is_empty()
-                || ctx.our_bids.iter().all(|&t| {
-                    (t as i16 - target_bid as i16).unsigned_abs() > self.config.requote_threshold_ticks
+                || ctx.our_bids.iter().all(|order| {
+                    (order.tick as i16 - target_bid as i16).unsigned_abs()
+                        > self.config.requote_threshold_ticks
                 });
 
             if need_new_bid {
                 // Cancel existing bids if they're too far
-                for &tick in &ctx.our_bids {
-                    if (tick as i16 - target_bid as i16).unsigned_abs()
+                for order in &ctx.our_bids {
+                    if (order.tick as i16 - target_bid as i16).unsigned_abs()
                         > self.config.requote_threshold_ticks
                     {
                         actions.push(StrategyAction::CancelOrder {
-                            order_id: format!("bid-{}", tick), // Simplified - real impl needs order tracking
+                            client_order_id: order.client_order_id.clone(),
                             reason: "Re-quoting bid".to_string(),
                         });
                     }
@@ -188,8 +191,10 @@ impl Strategy for MakerMMStrategy {
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
                                 side: Side::Buy,
-                                tick: target_bid,
-                                size,
+                                kind: OrderKind::Limit {
+                                    price_tick: target_bid,
+                                    size_shares: size,
+                                },
                                 order_type: OrderType::Limit,
                                 reason: OrderReason::MakerQuote,
                             });
@@ -202,18 +207,19 @@ impl Strategy for MakerMMStrategy {
         // Check if we need to re-quote asks
         if self.should_quote_side(Side::Sell, ctx.position.net_size) {
             let need_new_ask = ctx.our_asks.is_empty()
-                || ctx.our_asks.iter().all(|&t| {
-                    (t as i16 - target_ask as i16).unsigned_abs() > self.config.requote_threshold_ticks
+                || ctx.our_asks.iter().all(|order| {
+                    (order.tick as i16 - target_ask as i16).unsigned_abs()
+                        > self.config.requote_threshold_ticks
                 });
 
             if need_new_ask {
                 // Cancel existing asks if they're too far
-                for &tick in &ctx.our_asks {
-                    if (tick as i16 - target_ask as i16).unsigned_abs()
+                for order in &ctx.our_asks {
+                    if (order.tick as i16 - target_ask as i16).unsigned_abs()
                         > self.config.requote_threshold_ticks
                     {
                         actions.push(StrategyAction::CancelOrder {
-                            order_id: format!("ask-{}", tick),
+                            client_order_id: order.client_order_id.clone(),
                             reason: "Re-quoting ask".to_string(),
                         });
                     }
@@ -227,8 +233,10 @@ impl Strategy for MakerMMStrategy {
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
                                 side: Side::Sell,
-                                tick: target_ask,
-                                size,
+                                kind: OrderKind::Limit {
+                                    price_tick: target_ask,
+                                    size_shares: size,
+                                },
                                 order_type: OrderType::Limit,
                                 reason: OrderReason::MakerQuote,
                             });
@@ -290,12 +298,12 @@ mod tests {
                 drawdown: 0,
                 drawdown_bps: 0,
             },
-            best_bid: Some(mid - 1),
-            best_ask: Some(mid + 1),
-            best_bid_size: 100_000,
-            best_ask_size: 100_000,
+            best_bid: Some(mid - 100),
+            best_ask: Some(mid + 100),
+            best_bid_size: 100_000_000,
+            best_ask_size: 100_000_000,
             mid_tick: Some(mid),
-            spread_ticks: Some(2),
+            spread_ticks: Some(200),
             our_bids: vec![],
             our_asks: vec![],
         }
@@ -304,7 +312,7 @@ mod tests {
     #[test]
     fn test_inactive_strategy() {
         let mut strategy = MakerMMStrategy::new("test".to_string(), MakerMMConfig::default());
-        let ctx = make_context(50, 0);
+        let ctx = make_context(5000, 0);
 
         let actions = strategy.on_update(&ctx);
         assert!(actions.is_empty());
@@ -315,7 +323,7 @@ mod tests {
         let mut strategy = MakerMMStrategy::new("test".to_string(), MakerMMConfig::default());
         strategy.activate();
 
-        let ctx = make_context(50, 0);
+        let ctx = make_context(5000, 0);
         let actions = strategy.on_update(&ctx);
 
         // Should have at least bid and ask orders

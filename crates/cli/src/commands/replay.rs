@@ -3,10 +3,23 @@
 use crate::config::Config;
 use anyhow::Result;
 use mtrader_book::ArrayBook;
-use mtrader_core::events::CoreEvent;
-use mtrader_risk::{PnLTracker, Position, PositionLimits};
-use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, PaperOrder, ReplayEngine, ReplayMode, ReplayStats};
-use mtrader_strategy::{MakerMMConfig, MakerMMStrategy, Strategy, StrategyAction, StrategyContext};
+use mtrader_core::events::{CoreEvent, MarketDataEvent};
+use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
+use mtrader_core::Side;
+use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
+use mtrader_execution::state_manager::OrderManagerConfig;
+use mtrader_risk::{PnLSnapshot, Position};
+use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, ReplayEngine};
+use mtrader_sim::fill_sim::SimEvent;
+use mtrader_sim::paper_book::PaperOrder;
+use mtrader_sim::replay::{ReplayMode, ReplayStats};
+use mtrader_strategy::{
+    BundleMakerStrategy, MakerMMStrategy, Strategy, StrategyAction, StrategyContext,
+    UnaffectedArbStrategy, WorkingOrder,
+};
+use mtrader_strategy::bundle_maker::BundleMakerConfig;
+use mtrader_strategy::maker_mm::MakerMMConfig;
+use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
 use std::collections::VecDeque;
 use std::path::Path;
 use tracing::{error, info, warn};
@@ -16,13 +29,7 @@ use tracing::{error, info, warn};
 pub struct BacktestReport {
     pub total_events: u64,
     pub duration_ns: u64,
-    pub final_pnl: i64,
     pub total_trades: u64,
-    pub total_volume: u64,
-    pub total_fees: i64,
-    pub max_drawdown: i64,
-    pub win_rate: f64,
-    pub sharpe_ratio: f64,
 }
 
 impl BacktestReport {
@@ -31,13 +38,7 @@ impl BacktestReport {
             "total_events": self.total_events,
             "duration_ns": self.duration_ns,
             "duration_hours": self.duration_ns as f64 / 3_600_000_000_000.0,
-            "final_pnl_usdc": self.final_pnl as f64 / 1_000_000.0,
             "total_trades": self.total_trades,
-            "total_volume_usdc": self.total_volume as f64 / 1_000_000.0,
-            "total_fees_usdc": self.total_fees as f64 / 1_000_000.0,
-            "max_drawdown_usdc": self.max_drawdown as f64 / 1_000_000.0,
-            "win_rate": self.win_rate,
-            "sharpe_ratio": self.sharpe_ratio,
         })
         .to_string()
     }
@@ -45,8 +46,6 @@ impl BacktestReport {
 
 /// Load events from Parquet file.
 fn load_events_from_parquet(_path: &Path) -> Result<Vec<CoreEvent>> {
-    // TODO: Implement proper Parquet reading
-    // For now, return empty - this would use arrow/parquet to read
     warn!("Parquet reading not yet fully implemented");
     Ok(Vec::new())
 }
@@ -72,11 +71,9 @@ pub async fn run(
         return Err(anyhow::anyhow!("Input path not found"));
     }
 
-    // Load events
     let events = if input_path.is_file() {
         load_events_from_parquet(input_path)?
     } else {
-        // Directory - load all parquet files
         let mut all_events = Vec::new();
         for entry in std::fs::read_dir(input_path)? {
             let entry = entry?;
@@ -86,18 +83,7 @@ pub async fn run(
                 all_events.extend(file_events);
             }
         }
-        // Sort by timestamp
-        all_events.sort_by_key(|e| match e {
-            CoreEvent::BookUpdate(e) => e.ts_process_mono_ns,
-            CoreEvent::Trade(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderAck(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderFill(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderCancel(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderReject(e) => e.ts_process_mono_ns,
-            CoreEvent::StrategySignal(e) => e.timestamp_ns,
-            CoreEvent::RiskEvent(e) => e.timestamp_ns,
-            CoreEvent::SystemHealth(e) => e.timestamp_ns,
-        });
+        all_events.sort_by_key(event_timestamp);
         all_events
     };
 
@@ -115,177 +101,310 @@ pub async fn run(
         "Loaded events for replay"
     );
 
-    // Initialize replay engine
     let mode = if speed > 0.0 {
         ReplayMode::RealTime
     } else {
         ReplayMode::FastForward
     };
-    let mut replay = ReplayEngine::new(mode);
-    replay.set_speed(speed);
-    replay.load_events(events);
 
-    // Initialize trading components
+    let mut engine = ReplayEngine::new(mode);
+    engine.load_events(events);
+
     let mut book = ArrayBook::new(100);
     let mut paper_book = PaperBook::new(100);
     let mut position = Position::new();
-    let mut pnl_tracker = PnLTracker::new();
+    let mut order_manager = OrderStateManager::new(OrderManagerConfig::default());
 
-    let limits = PositionLimits {
-        max_position: config.risk.max_position,
-        max_notional: config.risk.max_position as u64 * 2,
-        max_open_orders: config.risk.max_open_orders,
-        max_order_size: config.strategy.order_size as i64,
-    };
-
-    // Initialize fill simulator
     let fill_config = FillSimConfig {
         fee_rate_bps: config.risk.fee_rate_bps,
         ..Default::default()
     };
     let mut fill_sim = FillSimulator::new(fill_config);
 
-    // Initialize strategy
-    let strategy_config = MakerMMConfig {
-        spread_ticks: config.strategy.spread_ticks,
-        order_size: config.strategy.order_size as i64,
-        num_levels: config.strategy.num_levels,
-        skew_factor: config.strategy.skew_factor,
-        requote_threshold_ticks: config.strategy.requote_threshold,
-        min_edge_ticks: config.strategy.min_edge_ticks,
+    let fee_profile = MarketFeeProfile {
+        label: "replay_default".to_string(),
+        schedule: FeeSchedule::Parabolic {
+            fee_rate_bps: config.risk.fee_rate_bps as u16,
+        },
     };
-    let mut strategy = MakerMMStrategy::new(strategy_config);
+
+    let mut strategy: Box<dyn Strategy> = match strategy_name {
+        "bundle_maker" => Box::new(BundleMakerStrategy::new(
+            "bundle_maker".to_string(),
+            BundleMakerConfig {
+                fee_profile: fee_profile.clone(),
+                ..Default::default()
+            },
+            "yes".to_string(),
+            "no".to_string(),
+        )),
+        "unaffected_arb" => Box::new(UnaffectedArbStrategy::new(
+            "unaffected_arb".to_string(),
+            UnaffectedArbConfig {
+                fee_profile: fee_profile.clone(),
+                ..Default::default()
+            },
+            "yes".to_string(),
+            "no".to_string(),
+        )),
+        _ => Box::new(MakerMMStrategy::new(
+            "maker_mm".to_string(),
+            MakerMMConfig {
+                half_spread_ticks: config.strategy.spread_ticks,
+                order_size: config.strategy.order_size,
+                max_position: config.risk.max_position,
+                skew_factor: config.strategy.skew_factor,
+                min_edge_ticks: config.strategy.min_edge_ticks,
+                requote_threshold_ticks: config.strategy.requote_threshold,
+                quote_both_sides: true,
+            },
+        )),
+    };
+
+    strategy.activate();
 
     let mut pending_actions: VecDeque<StrategyAction> = VecDeque::new();
-    let mut order_counter = 0u64;
-    let mut events_processed = 0u64;
 
-    // Replay loop
-    while let Some(event) = replay.next_event() {
-        events_processed += 1;
-        let current_time = replay.current_time_ns();
+    while let Some(event) = engine.next_event() {
+        let now_ns = event_timestamp(&event);
+        handle_sim_events(&mut fill_sim, &mut paper_book, now_ns);
 
-        match &event {
-            CoreEvent::BookUpdate(e) => {
-                // Validate and update book
-                if book.validate_inbound_tick(e.price_tick).is_ok() {
-                    book.set_size(e.side, e.price_tick, e.new_size);
-                    paper_book.market_book_mut().set_size(e.side, e.price_tick, e.new_size);
+        match event {
+            CoreEvent::MarketData(market) => match market {
+                MarketDataEvent::BookSnapshot { bids, asks, .. } => {
+                    book.clear();
+                    paper_book.market_book_mut().clear();
+                    for (tick, size) in bids {
+                        book.set_level_unchecked(Side::Buy, tick, size);
+                        paper_book.market_book_mut().set_level_unchecked(Side::Buy, tick, size);
+                    }
+                    for (tick, size) in asks {
+                        book.set_level_unchecked(Side::Sell, tick, size);
+                        paper_book.market_book_mut().set_level_unchecked(Side::Sell, tick, size);
+                    }
                 }
-            }
-
-            CoreEvent::Trade(e) => {
-                // Check for fills
-                let fills = fill_sim.on_trade(e.side, e.price_tick, e.size, current_time);
-                for fill in fills {
-                    let fill_side = fill_sim.order_side(&fill.order_id).unwrap_or(e.side);
-                    position.apply_fill(fill_side, fill.price_tick, fill.size);
-                    pnl_tracker.record_fill(fill_side, fill.price_tick, fill.size, fill.fee_micro_usdc);
-                    paper_book.remove_order(&fill.order_id);
+                MarketDataEvent::BookDelta { side, tick, new_size, .. } => {
+                    if book.validate_inbound_tick(tick, "book").is_ok() {
+                        book.set_level_unchecked(side, tick, new_size);
+                        paper_book.market_book_mut().set_level_unchecked(side, tick, new_size);
+                    }
                 }
-            }
-
+                MarketDataEvent::Trade { side, price_tick, size, timestamps, .. } => {
+                    let fills = fill_sim.on_trade(price_tick, size, side, timestamps.ts_process_mono_ns as u64);
+                    handle_fills(
+                        fills,
+                        side,
+                        &mut fill_sim,
+                        &mut paper_book,
+                        &mut position,
+                        &mut *strategy,
+                        &book,
+                        now_ns,
+                    );
+                }
+                MarketDataEvent::TickSizeChange { new_tick_size, .. } => {
+                    book.set_tick_size(new_tick_size);
+                    paper_book.market_book_mut().set_tick_size(new_tick_size);
+                }
+                _ => {}
+            },
             _ => {}
         }
 
-        // Advance fill simulator
-        let sim_events = fill_sim.advance(current_time);
-        for sim_event in sim_events {
-            if let mtrader_sim::SimEvent::OrderCancelled(order_id) = sim_event {
-                paper_book.remove_order(&order_id);
-            }
-        }
-
-        // Run strategy
-        let context = StrategyContext {
-            book: &book,
-            position: &position,
-            limits: &limits,
-            timestamp_ns: current_time,
+        let pnl = PnLSnapshot {
+            timestamp_ns: now_ns,
+            realized_pnl: position.realized_pnl_micro_usdc,
+            unrealized_pnl: 0,
+            total_pnl: position.realized_pnl_micro_usdc,
+            total_fees: 0,
+            net_pnl: position.realized_pnl_micro_usdc,
+            high_water_mark: 0,
+            drawdown: 0,
+            drawdown_bps: 0,
         };
 
-        let actions = strategy.on_book_update(&context);
+        let our_bids = collect_working_orders(&paper_book, Side::Buy);
+        let our_asks = collect_working_orders(&paper_book, Side::Sell);
+
+        let ctx = StrategyContext::from_book(
+            &book,
+            "asset".to_string(),
+            position.clone(),
+            pnl,
+            our_bids,
+            our_asks,
+            now_ns,
+        );
+
+        let actions = strategy.on_update(&ctx);
         pending_actions.extend(actions);
 
-        // Process actions
         while let Some(action) = pending_actions.pop_front() {
             match action {
-                StrategyAction::PlaceOrder { side, price_tick, size, .. } => {
-                    if limits.check_order(side, size, &position).is_ok() {
-                        order_counter += 1;
-                        let order_id = format!("replay-{}", order_counter);
+                StrategyAction::PlaceOrder { side, kind, order_type, reason } => {
+                    let client_order_id = order_manager.generate_client_id();
+                    let queue_ahead = match kind {
+                        OrderKind::Limit { price_tick, .. } => {
+                            paper_book.estimate_queue_ahead(side, price_tick)
+                        }
+                        _ => 0,
+                    };
 
-                        fill_sim.submit_order(order_id.clone(), side, price_tick, size, current_time);
+                    let order = Order::new(
+                        client_order_id.clone(),
+                        "asset".to_string(),
+                        side,
+                        kind,
+                        order_type,
+                        reason,
+                        now_ns,
+                    );
+
+                    let order_id = fill_sim.submit_order_with_queue(order, queue_ahead, now_ns);
+
+                    if let OrderKind::Limit { price_tick, size_shares } = kind {
                         paper_book.add_order(PaperOrder {
                             order_id,
+                            client_order_id,
                             side,
                             price_tick,
-                            size,
-                            timestamp_ns: current_time,
+                            size: size_shares,
+                            timestamp_ns: now_ns,
                         });
                     }
                 }
-
-                StrategyAction::CancelOrder { order_id, .. } => {
-                    fill_sim.cancel_order(&order_id, current_time);
+                StrategyAction::CancelOrder { client_order_id, .. } => {
+                    let order_id = client_order_id.0.clone();
+                    fill_sim.cancel_order(&order_id, now_ns);
                 }
-
-                StrategyAction::CancelAll { .. } => {
-                    for tick in paper_book.our_bid_ticks() {
-                        for order in paper_book.our_orders_at(mtrader_core::Side::Buy, tick) {
-                            fill_sim.cancel_order(&order.order_id, current_time);
-                        }
-                    }
-                    for tick in paper_book.our_ask_ticks() {
-                        for order in paper_book.our_orders_at(mtrader_core::Side::Sell, tick) {
-                            fill_sim.cancel_order(&order.order_id, current_time);
-                        }
-                    }
-                }
+                StrategyAction::AmendOrder { .. } | StrategyAction::NoOp => {}
             }
-        }
-
-        // Progress update
-        if events_processed % 100_000 == 0 {
-            info!(
-                events = events_processed,
-                remaining = replay.events_remaining(),
-                pnl = pnl_tracker.unrealized_pnl(),
-                "Replay progress"
-            );
         }
     }
 
-    // Generate report
     let report = BacktestReport {
-        total_events: events_processed,
+        total_events: stats.total_events,
         duration_ns: stats.duration_ns(),
-        final_pnl: pnl_tracker.unrealized_pnl(),
-        total_trades: pnl_tracker.trade_count(),
-        total_volume: pnl_tracker.total_volume() as u64,
-        total_fees: pnl_tracker.total_fees(),
-        max_drawdown: pnl_tracker.max_drawdown(),
-        win_rate: 0.0, // TODO: Calculate
-        sharpe_ratio: 0.0, // TODO: Calculate
+        total_trades: stats.trades,
     };
 
-    info!("Backtest complete");
-    println!("\n=== BACKTEST REPORT ===");
-    println!("Total Events: {}", report.total_events);
-    println!("Duration: {:.2} hours", report.duration_ns as f64 / 3_600_000_000_000.0);
-    println!("Final PnL: ${:.2}", report.final_pnl as f64 / 1_000_000.0);
-    println!("Total Trades: {}", report.total_trades);
-    println!("Total Volume: ${:.2}", report.total_volume as f64 / 1_000_000.0);
-    println!("Total Fees: ${:.2}", report.total_fees as f64 / 1_000_000.0);
-    println!("Max Drawdown: ${:.2}", report.max_drawdown as f64 / 1_000_000.0);
-    println!("========================\n");
-
-    // Save report if requested
     if let Some(path) = report_path {
-        let json = report.to_json();
-        std::fs::write(path, &json)?;
-        info!("Report saved to: {}", path);
+        std::fs::write(path, report.to_json())?;
+        info!(path = path, "Report written");
+    } else {
+        println!("{}", report.to_json());
     }
 
     Ok(())
+}
+
+fn collect_working_orders(paper_book: &PaperBook, side: Side) -> Vec<WorkingOrder> {
+    let ticks = match side {
+        Side::Buy => paper_book.our_bid_ticks(),
+        Side::Sell => paper_book.our_ask_ticks(),
+    };
+
+    let mut orders = Vec::new();
+    for tick in ticks {
+        for order in paper_book.our_orders_at(side, tick) {
+            orders.push(WorkingOrder {
+                tick,
+                client_order_id: order.client_order_id.clone(),
+            });
+        }
+    }
+    orders
+}
+
+fn handle_sim_events(fill_sim: &mut FillSimulator, paper_book: &mut PaperBook, now_ns: u64) {
+    let sim_events = fill_sim.advance(now_ns);
+    for event in sim_events {
+        match event {
+            SimEvent::OrderCancelled { order_id, .. } => {
+                paper_book.remove_order(&order_id);
+            }
+            SimEvent::OrderRejected { client_order_id, .. } => {
+                let _ = paper_book.remove_order_by_client_id(&client_order_id);
+            }
+            SimEvent::OrderAcked { .. } => {}
+        }
+    }
+}
+
+fn handle_fills(
+    fills: Vec<mtrader_sim::SimulatedFill>,
+    trade_side: Side,
+    fill_sim: &mut FillSimulator,
+    paper_book: &mut PaperBook,
+    position: &mut Position,
+    strategy: &mut dyn Strategy,
+    book: &ArrayBook,
+    now_ns: u64,
+) {
+    for fill in fills {
+        let fill_side = trade_side.opposite();
+        position.on_fill(fill_side, fill.price_tick, fill.size);
+
+        if let Some(order) = fill_sim.get_order(&fill.order_id) {
+            paper_book.update_order_size(&fill.order_id, order.remaining_size);
+        } else {
+            paper_book.remove_order(&fill.order_id);
+        }
+
+        let pnl = PnLSnapshot {
+            timestamp_ns: now_ns,
+            realized_pnl: position.realized_pnl_micro_usdc,
+            unrealized_pnl: 0,
+            total_pnl: position.realized_pnl_micro_usdc,
+            total_fees: 0,
+            net_pnl: position.realized_pnl_micro_usdc,
+            high_water_mark: 0,
+            drawdown: 0,
+            drawdown_bps: 0,
+        };
+
+        let our_bids = collect_working_orders(paper_book, Side::Buy);
+        let our_asks = collect_working_orders(paper_book, Side::Sell);
+
+        let ctx = StrategyContext::from_book(
+            book,
+            "asset".to_string(),
+            position.clone(),
+            pnl,
+            our_bids,
+            our_asks,
+            now_ns,
+        );
+
+        strategy.on_fill(&ctx, fill_side, fill.price_tick, fill.size);
+    }
+}
+
+fn event_timestamp(event: &CoreEvent) -> u64 {
+    match event {
+        CoreEvent::MarketData(data) => match data {
+            MarketDataEvent::BookSnapshot { timestamps, .. }
+            | MarketDataEvent::BookDelta { timestamps, .. }
+            | MarketDataEvent::Trade { timestamps, .. }
+            | MarketDataEvent::TickSizeChange { timestamps, .. }
+            | MarketDataEvent::BestBidAsk { timestamps, .. } => timestamps.ts_process_mono_ns as u64,
+            MarketDataEvent::ConnectionStatus { timestamp_mono_ns, .. }
+            | MarketDataEvent::ParseError { timestamp_mono_ns, .. } => *timestamp_mono_ns as u64,
+        },
+        CoreEvent::Signal(signal) => signal.timestamp_mono_ns as u64,
+        CoreEvent::OrderIntent(intent) => intent.timestamp_mono_ns as u64,
+        CoreEvent::OrderAck(ack) => ack.timestamp_mono_ns as u64,
+        CoreEvent::Fill(fill) => fill.timestamps.ts_process_mono_ns as u64,
+        CoreEvent::CancelAck(cancel) => cancel.timestamp_mono_ns as u64,
+        CoreEvent::Risk(_) => 0,
+        CoreEvent::System(system) => match system {
+            mtrader_core::events::SystemEvent::SafeMode { timestamp_mono_ns, .. }
+            | mtrader_core::events::SystemEvent::SafeModeCleared { timestamp_mono_ns }
+            | mtrader_core::events::SystemEvent::ResnaphotRequested { timestamp_mono_ns, .. }
+            | mtrader_core::events::SystemEvent::MarketLifecycle { timestamp_mono_ns, .. }
+            | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => {
+                *timestamp_mono_ns as u64
+            }
+        },
+    }
 }

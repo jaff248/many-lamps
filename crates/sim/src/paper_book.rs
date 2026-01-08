@@ -3,13 +3,14 @@
 //! Mirrors the live book and tracks our simulated orders.
 
 use mtrader_book::ArrayBook;
-use mtrader_core::{Side, Size, Tick};
+use mtrader_core::{ClientOrderId, Side, Size, Tick};
 use std::collections::HashMap;
 
 /// Our order in the paper book.
 #[derive(Debug, Clone)]
 pub struct PaperOrder {
     pub order_id: String,
+    pub client_order_id: mtrader_core::ClientOrderId,
     pub side: Side,
     pub price_tick: Tick,
     pub size: Size,
@@ -73,6 +74,20 @@ impl PaperBook {
         None
     }
 
+    /// Remove our order by client order ID.
+    pub fn remove_order_by_client_id(&mut self, client_order_id: &ClientOrderId) -> Option<PaperOrder> {
+        for orders in self.our_bids.values_mut().chain(self.our_asks.values_mut()) {
+            if let Some(idx) = orders
+                .iter()
+                .position(|order| order.client_order_id == *client_order_id)
+            {
+                return Some(orders.remove(idx));
+            }
+        }
+
+        None
+    }
+
     /// Update order size (after partial fill).
     pub fn update_order_size(&mut self, order_id: &str, new_size: Size) {
         for orders in self.our_bids.values_mut().chain(self.our_asks.values_mut()) {
@@ -109,6 +124,13 @@ impl PaperBook {
             Side::Sell => &self.our_asks,
         };
         map.values().flat_map(|v| v.iter()).map(|o| o.size).sum()
+    }
+
+    /// Estimate queue ahead size at a price level.
+    pub fn estimate_queue_ahead(&self, side: Side, tick: Tick) -> Size {
+        let market_size = self.market_book.get_level(side, tick);
+        let our_size: Size = self.our_orders_at(side, tick).iter().map(|o| o.size).sum();
+        market_size.saturating_sub(our_size)
     }
 
     /// Get our best bid tick.
@@ -160,15 +182,16 @@ mod tests {
 
         let order = PaperOrder {
             order_id: "order-1".into(),
+            client_order_id: mtrader_core::ClientOrderId("order-1".into()),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
         };
 
         book.add_order(order.clone());
         assert_eq!(book.our_order_count(), 1);
-        assert_eq!(book.our_best_bid(), Some(50));
+        assert_eq!(book.our_best_bid(), Some(5000));
 
         let removed = book.remove_order("order-1");
         assert!(removed.is_some());
@@ -179,31 +202,34 @@ mod tests {
     fn test_self_trade_detection() {
         let mut book = PaperBook::new(100);
 
-        // Add bid at 50
+        // Add bid at 50c
         book.add_order(PaperOrder {
             order_id: "bid-1".into(),
+            client_order_id: mtrader_core::ClientOrderId("bid-1".into()),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
         });
 
-        // Add ask at 52 - no self trade
+        // Add ask at 52c - no self trade
         book.add_order(PaperOrder {
             order_id: "ask-1".into(),
+            client_order_id: mtrader_core::ClientOrderId("ask-1".into()),
             side: Side::Sell,
-            price_tick: 52,
+            price_tick: 5200,
             size: 100_000,
             timestamp_ns: 2000,
         });
 
         assert!(!book.would_self_trade());
 
-        // Add crossing ask at 50 - would self trade
+        // Add crossing ask at 50c - would self trade
         book.add_order(PaperOrder {
             order_id: "ask-2".into(),
+            client_order_id: mtrader_core::ClientOrderId("ask-2".into()),
             side: Side::Sell,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 3000,
         });
@@ -217,15 +243,16 @@ mod tests {
 
         book.add_order(PaperOrder {
             order_id: "order-1".into(),
+            client_order_id: mtrader_core::ClientOrderId("order-1".into()),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100_000,
             timestamp_ns: 1000,
         });
 
         book.update_order_size("order-1", 50_000);
 
-        let orders = book.our_orders_at(Side::Buy, 50);
+        let orders = book.our_orders_at(Side::Buy, 5000);
         assert_eq!(orders[0].size, 50_000);
     }
 }

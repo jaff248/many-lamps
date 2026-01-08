@@ -143,17 +143,35 @@ impl ReplayEngine {
     }
 
     fn event_timestamp(event: &CoreEvent) -> u64 {
-        // Use process timestamp as canonical
         match event {
-            CoreEvent::BookUpdate(e) => e.ts_process_mono_ns,
-            CoreEvent::Trade(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderAck(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderFill(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderCancel(e) => e.ts_process_mono_ns,
-            CoreEvent::OrderReject(e) => e.ts_process_mono_ns,
-            CoreEvent::StrategySignal(e) => e.timestamp_ns,
-            CoreEvent::RiskEvent(e) => e.timestamp_ns,
-            CoreEvent::SystemHealth(e) => e.timestamp_ns,
+            CoreEvent::MarketData(data) => match data {
+                mtrader_core::events::MarketDataEvent::BookSnapshot { timestamps, .. }
+                | mtrader_core::events::MarketDataEvent::BookDelta { timestamps, .. }
+                | mtrader_core::events::MarketDataEvent::Trade { timestamps, .. }
+                | mtrader_core::events::MarketDataEvent::TickSizeChange { timestamps, .. }
+                | mtrader_core::events::MarketDataEvent::BestBidAsk { timestamps, .. } => {
+                    timestamps.ts_process_mono_ns as u64
+                }
+                mtrader_core::events::MarketDataEvent::ConnectionStatus { timestamp_mono_ns, .. }
+                | mtrader_core::events::MarketDataEvent::ParseError { timestamp_mono_ns, .. } => {
+                    *timestamp_mono_ns as u64
+                }
+            },
+            CoreEvent::Signal(signal) => signal.timestamp_mono_ns as u64,
+            CoreEvent::OrderIntent(intent) => intent.timestamp_mono_ns as u64,
+            CoreEvent::OrderAck(ack) => ack.timestamp_mono_ns as u64,
+            CoreEvent::Fill(fill) => fill.timestamps.ts_process_mono_ns as u64,
+            CoreEvent::CancelAck(cancel) => cancel.timestamp_mono_ns as u64,
+            CoreEvent::Risk(_) => 0,
+            CoreEvent::System(system) => match system {
+                mtrader_core::events::SystemEvent::SafeMode { timestamp_mono_ns, .. }
+                | mtrader_core::events::SystemEvent::SafeModeCleared { timestamp_mono_ns }
+                | mtrader_core::events::SystemEvent::ResnaphotRequested { timestamp_mono_ns, .. }
+                | mtrader_core::events::SystemEvent::MarketLifecycle { timestamp_mono_ns, .. }
+                | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => {
+                    *timestamp_mono_ns as u64
+                }
+            },
         }
     }
 }
@@ -180,12 +198,17 @@ impl ReplayStats {
 
         for event in events {
             match event {
-                CoreEvent::BookUpdate(_) => stats.book_updates += 1,
-                CoreEvent::Trade(_) => stats.trades += 1,
+                CoreEvent::MarketData(market) => match market {
+                    mtrader_core::events::MarketDataEvent::BookSnapshot { .. }
+                    | mtrader_core::events::MarketDataEvent::BookDelta { .. } => {
+                        stats.book_updates += 1
+                    }
+                    mtrader_core::events::MarketDataEvent::Trade { .. } => stats.trades += 1,
+                    _ => {}
+                },
                 CoreEvent::OrderAck(_) => stats.order_acks += 1,
-                CoreEvent::OrderFill(_) => stats.fills += 1,
-                CoreEvent::OrderCancel(_) => stats.cancels += 1,
-                CoreEvent::OrderReject(_) => stats.rejects += 1,
+                CoreEvent::Fill(_) => stats.fills += 1,
+                CoreEvent::CancelAck(_) => stats.cancels += 1,
                 _ => {}
             }
 
@@ -217,29 +240,40 @@ impl ReplayStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mtrader_core::events::{BookUpdateEvent, TradeEvent};
-    use mtrader_core::Side;
+    use mtrader_core::events::{EventTimestamps, MarketDataEvent};
+    use mtrader_core::{MarketId, Side, TokenId};
 
     fn make_book_event(ts: u64) -> CoreEvent {
-        CoreEvent::BookUpdate(BookUpdateEvent {
+        CoreEvent::MarketData(MarketDataEvent::BookDelta {
+            market_id: MarketId("market".to_string()),
+            token_id: TokenId("token".to_string()),
             side: Side::Buy,
-            price_tick: 50,
+            tick: 5000,
             new_size: 1000,
-            ts_exchange_ms: ts / 1_000_000,
-            ts_recv_mono_ns: ts,
-            ts_process_mono_ns: ts,
+            best_bid: None,
+            best_ask: None,
+            order_hash: "hash".to_string(),
+            timestamps: EventTimestamps {
+                ts_exchange_ms: ts as i64 / 1_000_000,
+                ts_recv_mono_ns: ts as i64,
+                ts_process_mono_ns: ts as i64,
+            },
         })
     }
 
     fn make_trade_event(ts: u64) -> CoreEvent {
-        CoreEvent::Trade(TradeEvent {
+        CoreEvent::MarketData(MarketDataEvent::Trade {
+            market_id: MarketId("market".to_string()),
+            token_id: TokenId("token".to_string()),
             side: Side::Buy,
-            price_tick: 50,
+            price_tick: 5000,
             size: 100,
-            trade_id: "trade-1".into(),
-            ts_exchange_ms: ts / 1_000_000,
-            ts_recv_mono_ns: ts,
-            ts_process_mono_ns: ts,
+            fee_rate_bps: 1000,
+            timestamps: EventTimestamps {
+                ts_exchange_ms: ts as i64 / 1_000_000,
+                ts_recv_mono_ns: ts as i64,
+                ts_process_mono_ns: ts as i64,
+            },
         })
     }
 
@@ -259,14 +293,14 @@ mod tests {
         assert!(!engine.is_complete());
 
         let e1 = engine.next_event();
-        assert!(matches!(e1, Some(CoreEvent::BookUpdate(_))));
+        assert!(matches!(e1, Some(CoreEvent::MarketData(_))));
         assert_eq!(engine.events_processed(), 1);
 
         let e2 = engine.next_event();
-        assert!(matches!(e2, Some(CoreEvent::BookUpdate(_))));
+        assert!(matches!(e2, Some(CoreEvent::MarketData(_))));
 
         let e3 = engine.next_event();
-        assert!(matches!(e3, Some(CoreEvent::Trade(_))));
+        assert!(matches!(e3, Some(CoreEvent::MarketData(_))));
 
         assert!(engine.is_complete());
         assert_eq!(engine.events_processed(), 3);
