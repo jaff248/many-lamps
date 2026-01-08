@@ -7,7 +7,7 @@
 //! from the book. We must wait for confirmation before placing a
 //! crossing order.
 
-use crate::order::{Order, OrderState};
+use crate::order::{Order, OrderKind, OrderState};
 use mtrader_core::{Side, Tick};
 use std::collections::{HashMap, HashSet};
 
@@ -68,13 +68,17 @@ impl SelfTradeGuard {
             return;
         }
 
+        let OrderKind::Limit { price_tick, .. } = order.kind else {
+            return;
+        };
+
         let ticks = match order.side {
             Side::Buy => &mut self.buy_ticks,
             Side::Sell => &mut self.sell_ticks,
         };
 
         ticks
-            .entry(order.price_tick)
+            .entry(price_tick)
             .or_default()
             .insert(order.order_id.clone());
     }
@@ -83,11 +87,14 @@ impl SelfTradeGuard {
     pub fn update_order(&mut self, order: &Order, now_ns: u64) {
         match order.state {
             OrderState::PendingCancel => {
+                let OrderKind::Limit { price_tick, .. } = order.kind else {
+                    return;
+                };
                 // Track that cancel is pending
                 self.pending_cancels.insert(
                     order.order_id.clone(),
                     PendingCancel {
-                        tick: order.price_tick,
+                        tick: price_tick,
                         side: order.side,
                         cancel_requested_ns: now_ns,
                     },
@@ -95,7 +102,9 @@ impl SelfTradeGuard {
             }
             OrderState::Cancelled | OrderState::Filled | OrderState::Rejected => {
                 // Remove from tracking
-                self.remove_order(&order.order_id, order.price_tick, order.side);
+                if let OrderKind::Limit { price_tick, .. } = order.kind {
+                    self.remove_order(&order.order_id, price_tick, order.side);
+                }
                 self.pending_cancels.remove(&order.order_id);
             }
             _ => {}
@@ -264,8 +273,8 @@ impl std::error::Error for SelfTradeBlock {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::order::{Order, OrderType};
-    use mtrader_core::OrderReason;
+    use crate::order::{Order, OrderKind, OrderType};
+    use mtrader_core::{ClientOrderId, OrderReason};
 
     fn make_order(
         order_id: &str,
@@ -274,11 +283,13 @@ mod tests {
         state: OrderState,
     ) -> Order {
         let mut order = Order::new(
-            format!("client-{}", order_id),
+            ClientOrderId(format!("client-{}", order_id)),
             "asset-123".into(),
             side,
-            tick,
-            100_000,
+            OrderKind::Limit {
+                price_tick: tick,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             0,
@@ -291,8 +302,8 @@ mod tests {
     #[test]
     fn test_no_self_trade_without_orders() {
         let guard = SelfTradeGuard::new(SelfTradeConfig::default());
-        assert!(guard.check_order(Side::Buy, 50, 0).is_ok());
-        assert!(guard.check_order(Side::Sell, 50, 0).is_ok());
+        assert!(guard.check_order(Side::Buy, 5000, 0).is_ok());
+        assert!(guard.check_order(Side::Sell, 5000, 0).is_ok());
     }
 
     #[test]
@@ -300,16 +311,16 @@ mod tests {
         let mut guard = SelfTradeGuard::new(SelfTradeConfig::default());
 
         // We have a sell at tick 55
-        let sell_order = make_order("sell-1", Side::Sell, 55, OrderState::Open);
+        let sell_order = make_order("sell-1", Side::Sell, 5500, OrderState::Open);
         guard.register_order(&sell_order);
 
         // Buying at 55 or higher would cross
-        assert!(guard.check_order(Side::Buy, 55, 0).is_err());
-        assert!(guard.check_order(Side::Buy, 60, 0).is_err());
+        assert!(guard.check_order(Side::Buy, 5500, 0).is_err());
+        assert!(guard.check_order(Side::Buy, 6000, 0).is_err());
 
         // Buying at 54 or lower is fine
-        assert!(guard.check_order(Side::Buy, 54, 0).is_ok());
-        assert!(guard.check_order(Side::Buy, 50, 0).is_ok());
+        assert!(guard.check_order(Side::Buy, 5400, 0).is_ok());
+        assert!(guard.check_order(Side::Buy, 5000, 0).is_ok());
     }
 
     #[test]
@@ -321,7 +332,7 @@ mod tests {
         let mut guard = SelfTradeGuard::new(config);
 
         // We have a sell at tick 55
-        let mut sell_order = make_order("sell-1", Side::Sell, 55, OrderState::Open);
+        let mut sell_order = make_order("sell-1", Side::Sell, 5500, OrderState::Open);
         guard.register_order(&sell_order);
 
         // Request cancel at t=0
@@ -330,46 +341,46 @@ mod tests {
 
         // At t=50ms, still blocked (within cancel latency + margin)
         let t_50ms = 50_000_000;
-        assert!(guard.check_order(Side::Buy, 55, t_50ms).is_err());
+        assert!(guard.check_order(Side::Buy, 5500, t_50ms).is_err());
 
         // At t=200ms, should be allowed (past cancel latency + margin)
         let t_200ms = 200_000_000;
-        assert!(guard.check_order(Side::Buy, 55, t_200ms).is_ok());
+        assert!(guard.check_order(Side::Buy, 5500, t_200ms).is_ok());
     }
 
     #[test]
     fn test_order_removal_on_fill() {
         let mut guard = SelfTradeGuard::new(SelfTradeConfig::default());
 
-        let mut buy_order = make_order("buy-1", Side::Buy, 50, OrderState::Open);
+        let mut buy_order = make_order("buy-1", Side::Buy, 5000, OrderState::Open);
         guard.register_order(&buy_order);
 
         // Initially blocked
-        assert!(guard.check_order(Side::Sell, 50, 0).is_err());
+        assert!(guard.check_order(Side::Sell, 5000, 0).is_err());
 
         // Order fills
         buy_order.state = OrderState::Filled;
         guard.update_order(&buy_order, 1000);
 
         // Now allowed
-        assert!(guard.check_order(Side::Sell, 50, 1000).is_ok());
+        assert!(guard.check_order(Side::Sell, 5000, 1000).is_ok());
     }
 
     #[test]
     fn test_our_best_bid_ask() {
         let mut guard = SelfTradeGuard::new(SelfTradeConfig::default());
 
-        let buy1 = make_order("buy-1", Side::Buy, 48, OrderState::Open);
-        let buy2 = make_order("buy-2", Side::Buy, 50, OrderState::Open);
-        let sell1 = make_order("sell-1", Side::Sell, 52, OrderState::Open);
-        let sell2 = make_order("sell-2", Side::Sell, 55, OrderState::Open);
+        let buy1 = make_order("buy-1", Side::Buy, 4800, OrderState::Open);
+        let buy2 = make_order("buy-2", Side::Buy, 5000, OrderState::Open);
+        let sell1 = make_order("sell-1", Side::Sell, 5200, OrderState::Open);
+        let sell2 = make_order("sell-2", Side::Sell, 5500, OrderState::Open);
 
         guard.register_order(&buy1);
         guard.register_order(&buy2);
         guard.register_order(&sell1);
         guard.register_order(&sell2);
 
-        assert_eq!(guard.our_best_bid(), Some(50));
-        assert_eq!(guard.our_best_ask(), Some(52));
+        assert_eq!(guard.our_best_bid(), Some(5000));
+        assert_eq!(guard.our_best_ask(), Some(5200));
     }
 }

@@ -5,8 +5,8 @@ edition = "2021"
 description = "Trading strategies for Polymarket"
 
 [dependencies]
-mtrader-core = { path = "../core" }
-mtrader-book = { path = "../book" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
+mtrader-book = { package = "many-lamps-book", path = "../book" }
 mtrader-execution = { path = "../execution" }
 mtrader-risk = { path = "../risk" }
 

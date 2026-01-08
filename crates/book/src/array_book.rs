@@ -519,7 +519,8 @@ mod tests {
         // Change tick size - should clear book
         book.set_tick_size(10);
         assert_eq!(book.best_bid(), None);
-        assert!(book.is_valid_tick(5005)); // Now valid with tick_size=10
+        assert!(!book.is_valid_tick(5005)); // Not valid with tick_size=10
+        assert!(book.is_valid_tick(5010));
     }
 
     #[test]

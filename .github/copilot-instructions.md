@@ -51,8 +51,8 @@ fn process_tick(tick: u16) -> u16 {
 
 // CORRECT - Reject invalid ticks explicitly
 fn validate_inbound_tick(&self, tick: Tick) -> Result<(), BookError> {
-    if tick > 100 {
-        return Err(BookError::InvalidTick { tick, max: 100 });
+    if tick > 10000 {
+        return Err(BookError::InvalidTick { tick, max: 10000 });
     }
     if tick % self.tick_size_ticks != 0 {
         return Err(BookError::TickNotAligned { tick, tick_size: self.tick_size_ticks });
@@ -84,10 +84,10 @@ pub struct BookUpdateEvent {
 BTC 15-minute markets use parabolic fees. The formula is:
 
 ```
-fee = (fee_rate_bps / 10000) × price × (1 - price) × size
+fee = (fee_rate_bps / 16000) × price × (1 - price) × size
 ```
 
-Where `fee_rate_bps = 1000` (10%) for 15-minute markets.
+Where `fee_rate_bps = 1000` (~6.25%) for 15-minute markets.
 
 ```rust
 // Use fixed-point math in hot path
@@ -97,9 +97,9 @@ pub fn compute_fee_micro_usdc(
     size: Size,
 ) -> i64 {
     let price_frac = price_tick as i64;
-    let complement = 100 - price_frac;
-    // fee = fee_rate_bps * price * (1-price) * size / (10000 * 100 * 100)
-    (self.fee_rate_bps as i64 * price_frac * complement * size) / 100_000_000
+    let complement = 10000 - price_frac;
+    // fee = fee_rate_bps * price * (1-price) * size / (16000 * 10000 * 10000)
+    (self.fee_rate_bps as i64 * price_frac * complement * size) / 1_600_000_000_000
 }
 ```
 
@@ -146,10 +146,10 @@ if !health.can_trade() {
 
 | Value | Unit | Example |
 |-------|------|---------|
-| Price | Tick (0-100, 1 tick = 1%) | `50` = $0.50 |
-| Size | Micro USDC | `100_000_000` = $100 |
+| Price | Tick (0-10000, 1 tick = 0.0001) | `5000` = $0.50 |
+| Size | Micro shares | `100_000_000` = 100 shares |
 | Time | Nanoseconds (mono) or MS (wall) | `1_000_000_000` = 1 second |
-| Fee | Micro USDC | `500_000` = $0.50 |
+| Fee | Micro shares (BUY) or micro USDC (SELL) | `500_000` = 0.5 shares |
 
 ### 7. Error Handling
 
@@ -181,9 +181,9 @@ mod tests {
     #[test]
     fn test_fee_at_50_cents() {
         let model = FeeModel::new(1000);
-        // At 50c: fee = 0.10 * 0.50 * 0.50 * 100 = 2.5 USDC
-        let fee = model.compute_fee_micro_usdc(50, 100_000_000);
-        assert_eq!(fee, 2_500_000);
+        // At 50c: fee = 0.0625 * 0.50 * 0.50 * 100 = 1.5625 shares
+        let fee = model.compute_fee_micro_usdc(5000, 100_000_000);
+        assert_eq!(fee, 1_562_500);
     }
 }
 ```

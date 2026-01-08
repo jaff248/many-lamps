@@ -1,26 +1,30 @@
 //! Market information command.
 
 use crate::config::Config;
+use crate::fee_profile::classify_fee_profile;
 use anyhow::Result;
-use mtrader_gateway::RestClient;
+use mtrader_gateway::{RestClient, RestConfig};
 use tracing::info;
 
 /// Show market information.
 pub async fn show(config: &Config, market: &str) -> Result<()> {
     info!(market = market, "Fetching market information");
 
-    let client = RestClient::new(&config.gateway.rest_url)?;
+    let client = RestClient::new(RestConfig {
+        base_url: config.gateway.rest_url.clone(),
+        ..Default::default()
+    })?;
 
-    // Fetch market info
-    match client.get_market_info(market).await {
+    match client.get_market(market).await {
         Ok(info) => {
+            let fee_profile = classify_fee_profile(&info, config.risk.fee_rate_bps as u16);
             println!("\n=== MARKET INFO ===");
-            println!("Token ID: {}", market);
-            println!("Question: {}", info.question);
-            println!("End Date: {}", info.end_date);
-            println!("Min Tick: {}", info.min_tick_size);
-            println!("Fee Rate: {}%", info.fee_rate_bps as f64 / 100.0);
+            println!("Condition ID: {}", info.condition_id);
             println!("Active: {}", info.active);
+            println!("Closed: {}", info.closed);
+            println!("Min Tick: {:?}", info.minimum_tick_size);
+            println!("Fee Profile: {}", fee_profile.label);
+            println!("Fee Schedule: {:?}", fee_profile.schedule);
             println!("===================\n");
         }
         Err(e) => {
@@ -28,32 +32,11 @@ pub async fn show(config: &Config, market: &str) -> Result<()> {
         }
     }
 
-    // Fetch order book snapshot
-    match client.get_book_snapshot(market).await {
+    match client.get_book(market).await {
         Ok(book) => {
             println!("=== ORDER BOOK ===");
-            println!("Timestamp: {}", book.timestamp);
             println!("Hash: {}", book.hash);
-
-            println!("\nBids:");
-            for (price, size) in book.bids.iter().take(5) {
-                println!("  {:.2}  {:>12}", price, size);
-            }
-
-            println!("\nAsks:");
-            for (price, size) in book.asks.iter().take(5) {
-                println!("  {:.2}  {:>12}", price, size);
-            }
-
-            // Calculate spread
-            if let (Some((best_bid, _)), Some((best_ask, _))) =
-                (book.bids.first(), book.asks.first())
-            {
-                let spread = best_ask - best_bid;
-                let mid = (best_ask + best_bid) / 2.0;
-                let spread_bps = (spread / mid) * 10000.0;
-                println!("\nSpread: {:.4} ({:.1} bps)", spread, spread_bps);
-            }
+            println!("Timestamp: {:?}", book.timestamp);
             println!("==================\n");
         }
         Err(e) => {

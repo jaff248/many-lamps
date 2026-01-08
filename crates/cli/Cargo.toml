@@ -9,9 +9,9 @@ name = "mtrader"
 path = "src/main.rs"
 
 [dependencies]
-mtrader-core = { path = "../core" }
-mtrader-book = { path = "../book" }
-mtrader-gateway = { path = "../gateway" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
+mtrader-book = { package = "many-lamps-book", path = "../book" }
+mtrader-gateway = { package = "many-lamps-gateway", path = "../gateway" }
 mtrader-execution = { path = "../execution" }
 mtrader-risk = { path = "../risk" }
 mtrader-strategy = { path = "../strategy" }

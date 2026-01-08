@@ -8,14 +8,22 @@
 //!
 //! The state machine ensures we never lose track of orders.
 
-use mtrader_core::{OrderReason, Side, Size, Tick};
+use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick, UsdcAmount};
 use serde::{Deserialize, Serialize};
 
 /// Unique order identifier.
 pub type OrderId = String;
 
-/// Client-assigned order ID for idempotency.
-pub type ClientOrderId = String;
+/// Order sizing semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OrderKind {
+    /// Limit order with price tick and size in shares.
+    Limit { price_tick: Tick, size_shares: Size },
+    /// Market buy sized in USDC.
+    MarketBuy { usdc_amount: UsdcAmount },
+    /// Market sell sized in shares.
+    MarketSell { size_shares: Size },
+}
 
 /// Order state in the lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -104,9 +112,9 @@ pub struct Order {
     pub asset_id: String,
     /// Buy or Sell
     pub side: Side,
-    /// Price as tick (1 tick = 1 cent for 0.01 tick size)
-    pub price_tick: Tick,
-    /// Original order size in centishares
+    /// Order kind (limit/market semantics)
+    pub kind: OrderKind,
+    /// Original order size in micro-shares (0 for market buys)
     pub original_size: Size,
     /// Remaining unfilled size
     pub remaining_size: Size,
@@ -130,18 +138,23 @@ impl Order {
         client_order_id: ClientOrderId,
         asset_id: String,
         side: Side,
-        price_tick: Tick,
-        size: Size,
+        kind: OrderKind,
         order_type: OrderType,
         reason: OrderReason,
         now_ns: u64,
     ) -> Self {
+        let size = match kind {
+            OrderKind::Limit { size_shares, .. } => size_shares,
+            OrderKind::MarketSell { size_shares } => size_shares,
+            OrderKind::MarketBuy { .. } => 0,
+        };
+
         Self {
             order_id: String::new(), // Set when ack received
             client_order_id,
             asset_id,
             side,
-            price_tick,
+            kind,
             original_size: size,
             remaining_size: size,
             filled_size: 0,
@@ -208,6 +221,23 @@ impl Order {
     }
 }
 
+impl Order {
+    pub fn price_tick(&self) -> Tick {
+        match self.kind {
+            OrderKind::Limit { price_tick, .. } => price_tick,
+            _ => 0,
+        }
+    }
+
+    pub fn size_shares(&self) -> Option<Size> {
+        match self.kind {
+            OrderKind::Limit { size_shares, .. } => Some(size_shares),
+            OrderKind::MarketSell { size_shares } => Some(size_shares),
+            OrderKind::MarketBuy { .. } => None,
+        }
+    }
+}
+
 /// Error for invalid state transitions.
 #[derive(Debug, Clone)]
 pub struct InvalidTransition {
@@ -230,11 +260,13 @@ mod tests {
     #[test]
     fn test_order_lifecycle_normal() {
         let mut order = Order::new(
-            "client-1".into(),
+            ClientOrderId("client-1".into()),
             "asset-123".into(),
             Side::Buy,
-            50, // 0.50
-            100_000, // 1000 shares
+            OrderKind::Limit {
+                price_tick: 5000,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             1000,
@@ -262,11 +294,13 @@ mod tests {
     #[test]
     fn test_order_cancel_flow() {
         let mut order = Order::new(
-            "client-2".into(),
+            ClientOrderId("client-2".into()),
             "asset-123".into(),
             Side::Sell,
-            55,
-            100_000,
+            OrderKind::Limit {
+                price_tick: 5500,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             1000,
@@ -284,11 +318,13 @@ mod tests {
     #[test]
     fn test_cancel_race_with_fill() {
         let mut order = Order::new(
-            "client-3".into(),
+            ClientOrderId("client-3".into()),
             "asset-123".into(),
             Side::Buy,
-            50,
-            100_000,
+            OrderKind::Limit {
+                price_tick: 5000,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             1000,
@@ -305,11 +341,13 @@ mod tests {
     #[test]
     fn test_invalid_transition() {
         let mut order = Order::new(
-            "client-4".into(),
+            ClientOrderId("client-4".into()),
             "asset-123".into(),
             Side::Buy,
-            50,
-            100_000,
+            OrderKind::Limit {
+                price_tick: 5000,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             1000,

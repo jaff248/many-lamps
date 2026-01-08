@@ -5,9 +5,10 @@ use clap::{Parser, Subcommand};
 
 mod config;
 mod commands;
+mod fee_profile;
 mod logging;
 
-use commands::{paper, record, replay};
+use commands::{backtest, paper, record, replay};
 
 #[derive(Parser)]
 #[command(name = "mtrader")]
@@ -81,6 +82,53 @@ enum Commands {
         report: Option<String>,
     },
 
+    /// Backtest auto-hedge strategy using recorded snapshots
+    BacktestAuto {
+        /// Input file or directory of JSONL snapshots
+        #[arg(short, long)]
+        input: String,
+
+        /// Shares per leg
+        #[arg(long)]
+        shares: u64,
+
+        /// Sum target threshold (price_up + price_down)
+        #[arg(long, default_value = "0.95")]
+        sum_target: f64,
+
+        /// Dump threshold (e.g. 0.15 = 15%)
+        #[arg(long, default_value = "0.15")]
+        dip_threshold: f64,
+
+        /// Window minutes for leg 1
+        #[arg(long, default_value = "2")]
+        window_minutes: u64,
+
+        /// Sliding window for dip detection (ms)
+        #[arg(long, default_value = "3000")]
+        dip_window_ms: u64,
+
+        /// Fee rate (bps)
+        #[arg(long, default_value = "50")]
+        fee_rate_bps: u16,
+
+        /// Spread (bps)
+        #[arg(long, default_value = "200")]
+        spread_bps: f64,
+
+        /// Leg 2 timeout (seconds)
+        #[arg(long, default_value = "100")]
+        leg2_timeout_seconds: u64,
+
+        /// Starting balance in USDC
+        #[arg(long, default_value = "1000")]
+        starting_balance: f64,
+
+        /// Output report file
+        #[arg(short, long)]
+        report: Option<String>,
+    },
+
     /// Show market information
     Market {
         /// Market token ID
@@ -126,6 +174,35 @@ async fn main() -> Result<()> {
             report,
         } => {
             replay::run(&config, &input, &strategy, speed, report.as_deref()).await?;
+        }
+
+        Commands::BacktestAuto {
+            input,
+            shares,
+            sum_target,
+            dip_threshold,
+            window_minutes,
+            dip_window_ms,
+            fee_rate_bps,
+            spread_bps,
+            leg2_timeout_seconds,
+            starting_balance,
+            report,
+        } => {
+            backtest::run_auto_backtest(
+                &config,
+                &input,
+                shares,
+                sum_target,
+                dip_threshold,
+                window_minutes,
+                dip_window_ms,
+                fee_rate_bps,
+                spread_bps,
+                leg2_timeout_seconds,
+                starting_balance,
+                report.as_deref(),
+            )?;
         }
 
         Commands::Market { market } => {

@@ -5,7 +5,7 @@ edition = "2021"
 description = "Risk management for Polymarket trading"
 
 [dependencies]
-mtrader-core = { path = "../core" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
 
 # Serialization
 serde = { workspace = true }
