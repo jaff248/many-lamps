@@ -10,6 +10,7 @@ pub mod maker_mm;
 pub mod bundle_maker;
 pub mod auto_hedge;
 pub mod unaffected_arb;
+pub mod flow;
 pub mod signals;
 pub mod traits;
 
@@ -17,5 +18,6 @@ pub use maker_mm::MakerMMStrategy;
 pub use bundle_maker::BundleMakerStrategy;
 pub use auto_hedge::AutoHedgeStrategy;
 pub use unaffected_arb::UnaffectedArbStrategy;
+pub use flow::{FlowSignal, FlowSignalConfig, FlowSnapshot};
 pub use signals::{Signal, SignalProcessor};
 pub use traits::{Strategy, StrategyAction, StrategyContext, WorkingOrder};
