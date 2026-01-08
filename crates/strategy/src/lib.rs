@@ -8,10 +8,12 @@
 
 pub mod maker_mm;
 pub mod bundle_maker;
+pub mod flow;
 pub mod signals;
 pub mod traits;
 
 pub use maker_mm::MakerMMStrategy;
 pub use bundle_maker::BundleMakerStrategy;
+pub use flow::{FlowMetrics, FlowSignal, FlowSignalConfig};
 pub use signals::{Signal, SignalProcessor};
 pub use traits::{Strategy, StrategyAction, StrategyContext};

@@ -2,6 +2,7 @@
 //!
 //! Places quotes around fair value with inventory management.
 
+use crate::flow::FlowSignal;
 use crate::signals::Signal;
 use crate::traits::{Strategy, StrategyAction, StrategyContext};
 use mtrader_core::{OrderReason, Side, Size, Tick};
@@ -26,6 +27,18 @@ pub struct MakerMMConfig {
     pub requote_threshold_ticks: u16,
     /// Whether to quote both sides
     pub quote_both_sides: bool,
+    /// Alpha-flow skew scale (ticks per unit of alpha flow)
+    pub flow_alpha_skew_scale: f64,
+    /// Impact-flow spread scale (ticks per unit of impact flow)
+    pub flow_impact_spread_scale: f64,
+    /// Impact-flow size scale (fractional reduction per unit impact flow)
+    pub flow_impact_size_scale: f64,
+    /// Maximum additional spread from impact flow (ticks)
+    pub flow_max_spread_ticks: u16,
+    /// Maximum total skew from flow signals (ticks)
+    pub flow_max_skew_ticks: i16,
+    /// Minimum flow strength to apply adjustments
+    pub flow_min_strength: f64,
 }
 
 impl Default for MakerMMConfig {
@@ -38,6 +51,12 @@ impl Default for MakerMMConfig {
             min_edge_ticks: 1,
             requote_threshold_ticks: 1,
             quote_both_sides: true,
+            flow_alpha_skew_scale: 2.0,
+            flow_impact_spread_scale: 2.0,
+            flow_impact_size_scale: 0.5,
+            flow_max_spread_ticks: 4,
+            flow_max_skew_ticks: 4,
+            flow_min_strength: 0.2,
         }
     }
 }
@@ -51,6 +70,8 @@ pub struct MakerMMStrategy {
     signal: Option<Signal>,
     /// Last computed fair value
     fair_value_tick: Option<Tick>,
+    /// Flow-derived alpha/impact signal
+    flow_signal: Option<FlowSignal>,
 }
 
 impl MakerMMStrategy {
@@ -61,12 +82,18 @@ impl MakerMMStrategy {
             active: false,
             signal: None,
             fair_value_tick: None,
+            flow_signal: None,
         }
     }
 
     /// Update the signal used for fair value adjustment.
     pub fn set_signal(&mut self, signal: Signal) {
         self.signal = Some(signal);
+    }
+
+    /// Update flow-derived signal for alpha/impact adjustments.
+    pub fn set_flow_signal(&mut self, signal: FlowSignal) {
+        self.flow_signal = Some(signal);
     }
 
     /// Calculate fair value from mid price and signal.
@@ -84,22 +111,23 @@ impl MakerMMStrategy {
     }
 
     /// Calculate position-based skew.
-    fn calculate_skew(&self, position: i64) -> i16 {
+    fn calculate_skew(&self, position: i64, flow_skew: i16) -> i16 {
         // Skew away from position to reduce inventory
         let position_ratio = position as f64 / self.config.max_position as f64;
         let skew_ticks = (position_ratio * self.config.skew_factor * 5.0).round() as i16;
-        skew_ticks.clamp(-5, 5)
+        let combined = skew_ticks.clamp(-5, 5) + flow_skew;
+        combined.clamp(-self.config.flow_max_skew_ticks, self.config.flow_max_skew_ticks)
     }
 
     /// Calculate target bid tick.
-    fn target_bid(&self, fair_value: Tick, skew: i16) -> Tick {
-        let target = fair_value as i16 - self.config.half_spread_ticks as i16 - skew;
+    fn target_bid(&self, fair_value: Tick, skew: i16, half_spread_ticks: u16) -> Tick {
+        let target = fair_value as i16 - half_spread_ticks as i16 - skew;
         target.max(1) as Tick
     }
 
     /// Calculate target ask tick.
-    fn target_ask(&self, fair_value: Tick, skew: i16) -> Tick {
-        let target = fair_value as i16 + self.config.half_spread_ticks as i16 - skew;
+    fn target_ask(&self, fair_value: Tick, skew: i16, half_spread_ticks: u16) -> Tick {
+        let target = fair_value as i16 + half_spread_ticks as i16 - skew;
         target.min(99).max(1) as Tick
     }
 
@@ -121,8 +149,9 @@ impl MakerMMStrategy {
     }
 
     /// Determine order size based on position.
-    fn calculate_order_size(&self, side: Side, position: i64) -> Size {
+    fn calculate_order_size(&self, side: Side, position: i64, impact_factor: f64) -> Size {
         let base_size = self.config.order_size;
+        let adjusted_size = (base_size as f64 * impact_factor.clamp(0.0, 1.0)).round() as Size;
 
         // Reduce size as we approach position limit
         let headroom = match side {
@@ -130,7 +159,47 @@ impl MakerMMStrategy {
             Side::Sell => (self.config.max_position + position).max(0) as u64,
         };
 
-        base_size.min(headroom)
+        adjusted_size.min(headroom)
+    }
+
+    fn flow_skew_ticks(&self) -> i16 {
+        let Some(flow) = self.flow_signal else {
+            return 0;
+        };
+        if flow.alpha_strength < self.config.flow_min_strength {
+            return 0;
+        }
+        let scaled = -flow.alpha_flow * flow.alpha_strength * self.config.flow_alpha_skew_scale;
+        scaled
+            .round()
+            .clamp(-(self.config.flow_max_skew_ticks as f64), self.config.flow_max_skew_ticks as f64)
+            as i16
+    }
+
+    fn flow_spread_adjustment(&self) -> u16 {
+        let Some(flow) = self.flow_signal else {
+            return 0;
+        };
+        if flow.impact_strength < self.config.flow_min_strength {
+            return 0;
+        }
+        let impact = flow.impact_flow.abs() * flow.impact_strength * self.config.flow_impact_spread_scale;
+        let ticks = impact
+            .round()
+            .clamp(0.0, self.config.flow_max_spread_ticks as f64) as u16;
+        ticks
+    }
+
+    fn flow_size_factor(&self) -> f64 {
+        let Some(flow) = self.flow_signal else {
+            return 1.0;
+        };
+        if flow.impact_strength < self.config.flow_min_strength {
+            return 1.0;
+        }
+        let reduction = (flow.impact_flow.abs() * flow.impact_strength * self.config.flow_impact_size_scale)
+            .clamp(0.0, 1.0);
+        1.0 - reduction
     }
 }
 
@@ -156,9 +225,11 @@ impl Strategy for MakerMMStrategy {
         let fair_value = self.calculate_fair_value(mid_tick);
         self.fair_value_tick = Some(fair_value);
 
-        let skew = self.calculate_skew(ctx.position.net_size);
-        let target_bid = self.target_bid(fair_value, skew);
-        let target_ask = self.target_ask(fair_value, skew);
+        let flow_skew = self.flow_skew_ticks();
+        let skew = self.calculate_skew(ctx.position.net_size, flow_skew);
+        let half_spread = self.config.half_spread_ticks + self.flow_spread_adjustment();
+        let target_bid = self.target_bid(fair_value, skew, half_spread);
+        let target_ask = self.target_ask(fair_value, skew, half_spread);
 
         // Check if we need to re-quote bids
         if self.should_quote_side(Side::Buy, ctx.position.net_size) {
@@ -184,7 +255,8 @@ impl Strategy for MakerMMStrategy {
                 if let Some(best_ask) = ctx.best_ask {
                     let edge = best_ask as i16 - target_bid as i16;
                     if edge >= self.config.min_edge_ticks as i16 {
-                        let size = self.calculate_order_size(Side::Buy, ctx.position.net_size);
+                        let size =
+                            self.calculate_order_size(Side::Buy, ctx.position.net_size, self.flow_size_factor());
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
                                 side: Side::Buy,
@@ -223,7 +295,8 @@ impl Strategy for MakerMMStrategy {
                 if let Some(best_bid) = ctx.best_bid {
                     let edge = target_ask as i16 - best_bid as i16;
                     if edge >= self.config.min_edge_ticks as i16 {
-                        let size = self.calculate_order_size(Side::Sell, ctx.position.net_size);
+                        let size =
+                            self.calculate_order_size(Side::Sell, ctx.position.net_size, self.flow_size_factor());
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
                                 side: Side::Sell,
@@ -335,11 +408,63 @@ mod tests {
         });
 
         // Long position should skew quotes lower (to sell more)
-        let skew_long = strategy.calculate_skew(500_000);
+        let skew_long = strategy.calculate_skew(500_000, 0);
         assert!(skew_long > 0); // Positive skew moves quotes down
 
         // Short position should skew quotes higher (to buy more)
-        let skew_short = strategy.calculate_skew(-500_000);
+        let skew_short = strategy.calculate_skew(-500_000, 0);
         assert!(skew_short < 0); // Negative skew moves quotes up
+    }
+
+    #[test]
+    fn test_flow_skew_biases_quotes() {
+        let mut strategy = MakerMMStrategy::new("test".to_string(), MakerMMConfig {
+            flow_alpha_skew_scale: 4.0,
+            flow_max_skew_ticks: 4,
+            ..Default::default()
+        });
+        strategy.activate();
+        strategy.set_flow_signal(FlowSignal {
+            alpha_flow: 0.5,
+            impact_flow: 0.0,
+            alpha_strength: 1.0,
+            impact_strength: 0.0,
+            timestamp_ns: 1000,
+        });
+
+        let ctx = make_context(50, 0);
+        let actions = strategy.on_update(&ctx);
+        let best_bid = actions.iter().filter_map(|a| match a {
+            StrategyAction::PlaceOrder { side: Side::Buy, tick, .. } => Some(*tick),
+            _ => None,
+        }).max();
+
+        assert!(best_bid.unwrap_or(0) > 49);
+    }
+
+    #[test]
+    fn test_flow_impact_reduces_size() {
+        let mut strategy = MakerMMStrategy::new("test".to_string(), MakerMMConfig {
+            order_size: 1_000_000,
+            flow_impact_size_scale: 1.0,
+            ..Default::default()
+        });
+        strategy.activate();
+        strategy.set_flow_signal(FlowSignal {
+            alpha_flow: 0.0,
+            impact_flow: 0.8,
+            alpha_strength: 0.0,
+            impact_strength: 1.0,
+            timestamp_ns: 1000,
+        });
+
+        let ctx = make_context(50, 0);
+        let actions = strategy.on_update(&ctx);
+        let order_sizes: Vec<Size> = actions.iter().filter_map(|a| match a {
+            StrategyAction::PlaceOrder { size, .. } => Some(*size),
+            _ => None,
+        }).collect();
+
+        assert!(order_sizes.iter().all(|&size| size < 1_000_000));
     }
 }
