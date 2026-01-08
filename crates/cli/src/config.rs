@@ -91,7 +91,7 @@ pub struct StrategyConfig {
     #[serde(default = "default_spread_ticks")]
     pub spread_ticks: u16,
 
-    /// Order size (micro USDC).
+    /// Order size (micro-shares).
     #[serde(default = "default_order_size")]
     pub order_size: u64,
 
@@ -117,7 +117,7 @@ fn default_spread_ticks() -> u16 {
 }
 
 fn default_order_size() -> u64 {
-    100_000_000 // 100 USDC
+    100_000_000 // 100 shares
 }
 
 fn default_num_levels() -> u8 {
@@ -152,7 +152,7 @@ impl Default for StrategyConfig {
 /// Risk configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskConfig {
-    /// Maximum position size (micro USDC).
+    /// Maximum position size (micro-shares).
     #[serde(default = "default_max_position")]
     pub max_position: i64,
 
@@ -174,7 +174,7 @@ pub struct RiskConfig {
 }
 
 fn default_max_position() -> i64 {
-    1_000_000_000 // 1000 USDC
+    1_000_000_000 // 1000 shares
 }
 
 fn default_max_daily_loss() -> i64 {
@@ -190,7 +190,7 @@ fn default_max_open_orders() -> usize {
 }
 
 fn default_fee_rate_bps() -> u32 {
-    1000 // 10% for 15-min markets
+    1000 // 0.0625 coefficient for 15-min markets
 }
 
 impl Default for RiskConfig {

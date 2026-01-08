@@ -8,9 +8,9 @@
 //! - Cancel-before-cross workflow
 
 use crate::error::ExecutionError;
-use crate::order::{ClientOrderId, Order, OrderId, OrderState, OrderType};
+use crate::order::{Order, OrderId, OrderKind, OrderState, OrderType};
 use crate::self_trade_guard::{SelfTradeBlock, SelfTradeConfig, SelfTradeGuard};
-use mtrader_core::{OrderReason, Side, Size, Tick};
+use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick};
 use std::collections::HashMap;
 
 /// Configuration for order state manager.
@@ -65,7 +65,7 @@ impl OrderStateManager {
     pub fn generate_client_id(&mut self) -> ClientOrderId {
         let id = format!("mtrader-{}", self.next_client_id);
         self.next_client_id += 1;
-        id
+        ClientOrderId(id)
     }
 
     /// Create a new order with self-trade check.
@@ -75,15 +75,16 @@ impl OrderStateManager {
         &mut self,
         asset_id: String,
         side: Side,
-        price_tick: Tick,
-        size: Size,
+        kind: OrderKind,
         order_type: OrderType,
         reason: OrderReason,
         now_ns: u64,
     ) -> Result<Order, CreateOrderError> {
         // Check self-trade first
-        if let Err(block) = self.self_trade_guard.check_order(side, price_tick, now_ns) {
-            return Err(CreateOrderError::SelfTrade(block));
+        if let OrderKind::Limit { price_tick, .. } = kind {
+            if let Err(block) = self.self_trade_guard.check_order(side, price_tick, now_ns) {
+                return Err(CreateOrderError::SelfTrade(block));
+            }
         }
 
         // Check pending order limits
@@ -100,8 +101,7 @@ impl OrderStateManager {
             client_id.clone(),
             asset_id,
             side,
-            price_tick,
-            size,
+            kind,
             order_type,
             reason,
             now_ns,
@@ -114,7 +114,7 @@ impl OrderStateManager {
     /// Handle order acknowledgment from exchange.
     pub fn on_order_ack(
         &mut self,
-        client_order_id: &str,
+        client_order_id: &ClientOrderId,
         exchange_order_id: OrderId,
         now_ns: u64,
     ) -> Result<&Order, ExecutionError> {
@@ -135,7 +135,7 @@ impl OrderStateManager {
 
         // Store mappings
         self.client_to_exchange_id
-            .insert(client_order_id.to_string(), exchange_order_id.clone());
+            .insert(client_order_id.clone(), exchange_order_id.clone());
         self.orders_by_id.insert(exchange_order_id.clone(), order);
 
         Ok(self.orders_by_id.get(&exchange_order_id).unwrap())
@@ -144,7 +144,7 @@ impl OrderStateManager {
     /// Handle order rejection from exchange.
     pub fn on_order_reject(
         &mut self,
-        client_order_id: &str,
+        client_order_id: &ClientOrderId,
         _reason: &str,
         now_ns: u64,
     ) -> Result<Order, ExecutionError> {
@@ -256,9 +256,10 @@ impl OrderStateManager {
                 continue;
             }
 
+            let order_tick = order.price_tick();
             let would_cross = match side {
-                Side::Buy => order.price_tick <= tick,  // Our sell at or below buy price
-                Side::Sell => order.price_tick >= tick, // Our buy at or above sell price
+                Side::Buy => order_tick <= tick,  // Our sell at or below buy price
+                Side::Sell => order_tick >= tick, // Our buy at or above sell price
             };
 
             if would_cross {
@@ -275,7 +276,7 @@ impl OrderStateManager {
     }
 
     /// Get an order by client ID.
-    pub fn get_order_by_client_id(&self, client_order_id: &str) -> Option<&Order> {
+    pub fn get_order_by_client_id(&self, client_order_id: &ClientOrderId) -> Option<&Order> {
         // Check pending first
         if let Some(order) = self.pending_new.get(client_order_id) {
             return Some(order);
@@ -361,8 +362,10 @@ mod tests {
             .create_order(
                 "asset-123".into(),
                 Side::Buy,
-                50,
-                100_000,
+                OrderKind::Limit {
+                    price_tick: 5000,
+                    size_shares: 100_000,
+                },
                 OrderType::Limit,
                 OrderReason::MakerQuote,
                 1000,
@@ -392,8 +395,10 @@ mod tests {
             .create_order(
                 "asset-123".into(),
                 Side::Sell,
-                55,
-                100_000,
+                OrderKind::Limit {
+                    price_tick: 5500,
+                    size_shares: 100_000,
+                },
                 OrderType::Limit,
                 OrderReason::MakerQuote,
                 1000,
@@ -406,8 +411,10 @@ mod tests {
         let result = mgr.create_order(
             "asset-123".into(),
             Side::Buy,
-            55,
-            100_000,
+            OrderKind::Limit {
+                price_tick: 5500,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             3000,
@@ -418,8 +425,10 @@ mod tests {
         let result = mgr.create_order(
             "asset-123".into(),
             Side::Buy,
-            54,
-            100_000,
+            OrderKind::Limit {
+                price_tick: 5400,
+                size_shares: 100_000,
+            },
             OrderType::Limit,
             OrderReason::MakerQuote,
             3000,
@@ -432,13 +441,15 @@ mod tests {
         let mut mgr = OrderStateManager::new(OrderManagerConfig::default());
 
         // Create and ack sell orders at 55 and 57
-        for (tick, id) in [(55, "sell-1"), (57, "sell-2")] {
+        for (tick, id) in [(5500, "sell-1"), (5700, "sell-2")] {
             let order = mgr
                 .create_order(
                     "asset-123".into(),
                     Side::Sell,
-                    tick,
-                    100_000,
+                    OrderKind::Limit {
+                        price_tick: tick,
+                        size_shares: 100_000,
+                    },
                     OrderType::Limit,
                     OrderReason::MakerQuote,
                     1000,
@@ -449,12 +460,12 @@ mod tests {
         }
 
         // Check which orders need cancelling for a buy at 56
-        let to_cancel = mgr.orders_to_cancel_before_cross(Side::Buy, 56);
+        let to_cancel = mgr.orders_to_cancel_before_cross(Side::Buy, 5600);
         assert_eq!(to_cancel.len(), 1);
         assert!(to_cancel.contains(&"sell-1".to_string()));
 
         // Check for a buy at 58
-        let to_cancel = mgr.orders_to_cancel_before_cross(Side::Buy, 58);
+        let to_cancel = mgr.orders_to_cancel_before_cross(Side::Buy, 5800);
         assert_eq!(to_cancel.len(), 2);
     }
 
@@ -466,8 +477,10 @@ mod tests {
             .create_order(
                 "asset-123".into(),
                 Side::Buy,
-                50,
-                100_000,
+                OrderKind::Limit {
+                    price_tick: 5000,
+                    size_shares: 100_000,
+                },
                 OrderType::Limit,
                 OrderReason::MakerQuote,
                 1000,

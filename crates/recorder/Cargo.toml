@@ -5,7 +5,7 @@ edition = "2021"
 description = "Event recording and Parquet storage for MTrader"
 
 [dependencies]
-mtrader-core = { path = "../core" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
 
 # Parquet/Arrow for columnar storage
 parquet = { workspace = true }

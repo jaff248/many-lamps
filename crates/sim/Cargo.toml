@@ -5,14 +5,15 @@ edition = "2021"
 description = "Paper trading simulator for Polymarket"
 
 [dependencies]
-mtrader-core = { path = "../core" }
-mtrader-book = { path = "../book" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
+mtrader-book = { package = "many-lamps-book", path = "../book" }
 mtrader-execution = { path = "../execution" }
 mtrader-risk = { path = "../risk" }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+anyhow = { workspace = true }
 
 # Utilities
 thiserror = { workspace = true }
