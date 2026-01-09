@@ -93,7 +93,6 @@ pub fn get_available_strategies() -> Vec<StrategyInfo> {
     ]
 }
 
-/// Strategy information
 #[derive(Debug, Clone)]
 pub struct StrategyInfo {
     pub id: String,

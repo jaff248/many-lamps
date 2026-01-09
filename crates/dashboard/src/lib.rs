@@ -23,7 +23,7 @@ mod app;
 mod screens;
 
 pub use app::{App, AppState, MenuItem, TuiApp};
-pub use screens::{BacktestConfig, MarketInfo};
+pub use screens::{BacktestConfig, MarketInfo, StrategyInfo};
 
 pub use self::app::run_tui;
 
