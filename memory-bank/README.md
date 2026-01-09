@@ -1,16 +1,18 @@
 # Memory Bank
 
-Quick-reference notes for onboarding and testing in the `many-lamps` repo.
+This directory follows the Cline Memory Bank structure. Core files live alongside supplemental references.
 
-## What this is
+## Core files (required)
+- `projectbrief.md`
+- `productContext.md`
+- `systemPatterns.md`
+- `techContext.md`
+- `activeContext.md`
+- `progress.md`
 
-This directory is a lightweight, human- and model-friendly index of:
-- **Architecture and crate map**
-- **Core data flow** (gateway → core → strategy → execution)
-- **Testing and live data validation** workflows
-- **Common commands** and gotchas
+## Supplemental context
+- `architecture.md`: crate map + data flow
+- `strategy-notes.md`: strategy entry points and signals
+- `testing.md`: test and live-market validation commands
 
-Start with:
-- `architecture.md` for crate map + data flow
-- `testing.md` for test and live-market validation steps
-- `strategy-notes.md` for signal and strategy entry points
+Start with the core files, then dive into supplemental references as needed.
