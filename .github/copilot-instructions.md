@@ -11,6 +11,14 @@ MTrader is a Rust-based automated trading system designed for maker strategies o
 3. **Determinism** - Event sourcing, deterministic replay, reproducible results
 4. **Observability** - Three-timestamp events, Parquet recording, structured logging
 
+## Memory Bank (onboarding index)
+
+Reference the `memory-bank/` directory for a concise map of the repo, data flow,
+and testing steps:
+- `memory-bank/architecture.md` for crate map + entry points
+- `memory-bank/testing.md` for baseline tests + live market validation
+- `memory-bank/strategy-notes.md` for strategy/signal integration
+
 ## Architecture
 
 ```
@@ -345,6 +353,12 @@ cargo run --bin mtrader -- market -m <TOKEN_ID>
 # Validate config
 cargo run --bin mtrader -- validate-config
 ```
+
+## Live market validation expectation
+
+When making strategy or execution changes, attempt a paper trading run against
+live market data (WebSocket feed). If the environment blocks network access,
+note the limitation and proceed with other tests.
 
 ## Questions?
 
