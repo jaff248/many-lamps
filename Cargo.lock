@@ -2928,12 +2928,15 @@ dependencies = [
 name = "mtrader-strategy"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "many-lamps-book",
  "many-lamps-core",
  "mtrader-execution",
+ "mtrader-research",
  "mtrader-risk",
  "serde",
  "thiserror 2.0.17",
+ "tokio",
  "tracing",
 ]
 

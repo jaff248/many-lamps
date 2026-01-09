@@ -9,6 +9,13 @@ mtrader-core = { package = "many-lamps-core", path = "../core" }
 mtrader-book = { package = "many-lamps-book", path = "../book" }
 mtrader-execution = { path = "../execution" }
 mtrader-risk = { path = "../risk" }
+mtrader-research = { path = "../research" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Time
+chrono = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

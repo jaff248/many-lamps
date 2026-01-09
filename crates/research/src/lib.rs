@@ -79,7 +79,7 @@ pub struct PositionConversionEvent {
 }
 
 /// Market sentiment analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketSentiment {
     pub market_slug: String,
     pub yes_price: f64,
@@ -92,7 +92,7 @@ pub struct MarketSentiment {
 }
 
 /// Arbitrage opportunity
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArbitrageOpportunity {
     pub market_slug: String,
     pub conversion_type: String,  // "NO_TO_YES"
@@ -102,7 +102,7 @@ pub struct ArbitrageOpportunity {
     pub risk_level: RiskLevel,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RiskLevel {
     Low,
     Medium,
@@ -268,12 +268,12 @@ pub async fn research_market(slug: &str) -> Result<MarketResearch, Box<dyn Error
     let sentiment = analyze_market_sentiment(&market, &[]).await;  // No trades yet
     let arbitrage = identify_no_to_yes_arbitrage(&market);
 
-    let mut notes = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     let mut recommendation = StrategyRecommendation::Observe;
 
     // Fee analysis
     if market.fee_rate_bps.as_ref().map(|s| s.parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0) > 0.0 {
-        notes.push("Market has trading fees - consider impact on strategy");
+        notes.push("Market has trading fees - consider impact on strategy".to_string());
     }
 
     // Recommendation logic
@@ -286,11 +286,11 @@ pub async fn research_market(slug: &str) -> Result<MarketResearch, Box<dyn Error
         notes.push(format!("Wide spread {:.1}% - good for market making", spread * 100.0));
     } else if spread < 0.02 {
         recommendation = StrategyRecommendation::Taker;
-        notes.push("Tight spread - consider directional bets");
+        notes.push("Tight spread - consider directional bets".to_string());
     }
 
     if sentiment.trader_concentration > 0.5 {
-        notes.push("High trader concentration - careful with large positions");
+        notes.push("High trader concentration - careful with large positions".to_string());
     }
 
     Ok(MarketResearch {

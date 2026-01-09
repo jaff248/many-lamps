@@ -1,66 +1,85 @@
 # Active Context
 
 ## Current focus
-- Implementing RBI System: Research → Backtest → Implement
-- Building on-chain data infrastructure for strategy research
+- Implementing research-backed arbitrage strategies
+- Single-condition rebalancing arbitrage deployed
+- Multi-condition and combinatorial arbitrage in progress
 
-## Research Findings Summary
+## Research Summary (arXiv:2508.03474)
 
-### Polymarket Fee Structure
-- **Most markets are fee-free** (no trading fees)
-- **15-min crypto markets** charge taker fees
-- Maker rebate program redistributes fees to LPs
+### Key Findings
+- **$40M total arbitrage profit** extracted during measurement period (Apr 2024 - Apr 2025)
+- **Single-condition arbitrage**: $5.9M (long) + $4.7M (short)
+- **Market arbitrage**: $28M+ across NegRisk markets
+- **Top arbitrageur**: $2M+ profit, 4,049 transactions
 
-### Key On-Chain Contracts
-- `CTF Exchange` (0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E) - binary markets
-- `NegRisk_CTFExchange` (0xC5d563A36AE78145C45a50134d48A1215220f80a) - multi-outcome markets
-- `NegRiskAdapter` (0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296) - NO→YES conversion
+### Two Arbitrage Types Identified
 
-### Key Events to Track
-- `OrderFilled` - identifies buyers/sellers
-- `OrdersMatched` - confirms trades
-- `PositionsSplit` - token minting (new positions)
-- `PositionsMerge` - token burning (position closes)
-- `PositionsConverted` - NO→YES arbitrage opportunity
+**1. Market Rebalancing Arbitrage (Intra-market)**
+- When YES + NO prices ≠ $1 (should sum to 1)
+- Long: sum < $1 → buy both, profit = 1 - sum
+- Short: sum > $1 → sell both, profit = sum - 1
+- Most opportunities in Politics/Sports during elections
 
-### @CRYINGLITTLEBABY Analysis
-- $382,876 profit from concentrated positions
-- Event-driven approach, not frequent trading
-- Capital intensive ($380k+ positions)
+**2. Combinatorial Arbitrage (Inter-market)**
+- Between dependent market pairs (e.g., "Who wins state" + "Winning margin")
+- Requires LLM-based dependency detection
+- 11 dependent pairs found in US election alone
 
-## Implementation Roadmap
+## Implementation Status
 
-### Phase 1: Research Infrastructure
-- [ ] On-chain data scraper (Polygon RPC)
-- [ ] Event tracking for key market signals
-- [ ] Market sentiment analyzer
+### ✅ Completed
+- [x] Memory Bank structure initialized
+- [x] TUI dashboard working
+- [x] Research crate with market data collection
+- [x] Alpha signals module (large trade detection, liquidity gaps)
+- [x] Single-condition rebalancing arbitrage strategy
+- [x] Strategy exported from crate
 
-### Phase 2: Backtesting Framework
-- [ ] Python backtest scripts
-- [ ] EV, drawdown, volatility metrics
-- [ ] Strategy validation pipeline
+### 🚧 In Progress
+- [ ] Multi-condition market arbitrage (NegRisk markets)
+- [ ] Combinatorial arbitrage (LLM-based dependency detection)
+- [ ] Smart money follower strategy
+- [ ] Backtesting framework
 
-### Phase 3: Strategy Development
-- [ ] Fee-free market maker strategy
-- [ ] NO→YES conversion arbitrage
-- [ ] Ensemble system for multiple conditions
+## New Strategy: RebalancingArbStrategy
 
-### Phase 4: Safe Implementation
-- [ ] Start with $10 position size
-- [ ] Circuit breakers and risk limits
-- [ ] Gradual scaling after proving EV
+**Configuration:**
+- Trigger threshold: 2% deviation from $1
+- Min profit per dollar: 1%
+- Max position: $100 (conservative)
+- Dry-run mode: enabled by default
 
-## RBI System Philosophy
-1. **Research**: Find anomalies, don't assume first idea works
-2. **Backtest**: 2000+ tests to find winners, use backtesting.py
-3. **Implement**: Ensemble approach, start small, remove emotion
+**Usage:**
+```rust
+use mtrader_strategy::{RebalancingArbStrategy, RebalancingArbConfig};
 
-## Key Contracts for Data
-- Polygon RPC: https://polygon-rpc.com
-- The Graph: polymarket/markets subgraph
-- Event logs more reliable than transaction data
+let config = RebalancingArbConfig {
+    trigger_threshold: 0.02,
+    max_position_usd: 100.0,
+    dry_run: true,
+    ..Default::default()
+};
+
+let strategy = RebalancingArbStrategy::new(gateway, Some(config));
+let opportunities = strategy.scan_for_opportunities().await;
+```
+
+## Key Thresholds from Research
+- Large trade: > $500 USD
+- Smart money: >3 trades, >$1000 total volume
+- Minimum profit threshold: $0.02 per dollar
+- Time window for execution: ~1 hour
+
+## Research Contract Addresses
+- CTF Exchange: 0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E
+- NegRisk Exchange: 0xC5d563A36AE78145C45a50134d48A1215220f80a
+- NegRisk Adapter: 0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296
+- CTF Token: 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045
 
 ## Next Steps
-- Build on-chain scraper to collect market data
-- Identify fee-free markets for maker-MM
-- Research NO→YES arbitrage in multi-outcome markets
+1. Wire rebalancing_arb into CLI paper trading
+2. Implement multi-condition arbitrage (sum of all YES ≠ 1)
+3. Add LLM-based market dependency detection
+4. Build backtest pipeline
+5. Test on fee-free markets only (avoid 15-min crypto)
