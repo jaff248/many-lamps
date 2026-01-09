@@ -34,10 +34,7 @@ pub fn classify_fee_profile(info: &RestMarketInfo, default_fee_bps: u16) -> Mark
 
     let haystack = fields.join(" ").to_lowercase();
 
-    if haystack.contains("15m")
-        || haystack.contains("15-min")
-        || haystack.contains("15 minute")
-    {
+    if haystack.contains("15m") || haystack.contains("15-min") || haystack.contains("15 minute") {
         return MarketFeeProfile::crypto_15m();
     }
 
@@ -84,7 +81,10 @@ mod tests {
         info.market_type = Some("crypto-15m".to_string());
 
         let profile = classify_fee_profile(&info, 1000);
-        assert_eq!(profile.schedule, FeeSchedule::Parabolic { fee_rate_bps: 1000 });
+        assert_eq!(
+            profile.schedule,
+            FeeSchedule::Parabolic { fee_rate_bps: 1000 }
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::messages::{
     BookSnapshot, LastTradePrice, MarketEvent, ParsedPriceChange, PriceChange, PriceChangeLevel,
     PriceLevel, TickSizeChange, WsMessage,
 };
-use mtrader_core::{parse_price_to_tick_strict, parse_size, Side, Tick, Size};
+use mtrader_core::{parse_price_to_tick_strict, parse_size, Side, Size, Tick};
 
 /// Parsed event with raw frame preserved.
 #[derive(Debug, Clone)]
@@ -134,9 +134,9 @@ impl Parser {
     }
 
     fn parse_price_change(&self, event: MarketEvent) -> Result<ParsedEvent, GatewayError> {
-        let changes = event
-            .price_changes
-            .ok_or_else(|| GatewayError::InvalidMessage("Price change missing price_changes".into()))?;
+        let changes = event.price_changes.ok_or_else(|| {
+            GatewayError::InvalidMessage("Price change missing price_changes".into())
+        })?;
 
         let mut parsed_changes = Vec::with_capacity(changes.len());
         for change in changes {

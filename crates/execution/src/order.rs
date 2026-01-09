@@ -52,7 +52,10 @@ impl OrderState {
 
     /// Check if this order is still live (can be filled).
     pub fn is_live(&self) -> bool {
-        matches!(self, Self::Open | Self::PartiallyFilled | Self::PendingCancel)
+        matches!(
+            self,
+            Self::Open | Self::PartiallyFilled | Self::PendingCancel
+        )
     }
 
     /// Check if a cancel is pending.
@@ -208,7 +211,11 @@ impl Order {
         self.transition_to(OrderState::Cancelled, now_ns)
     }
 
-    fn transition_to(&mut self, new_state: OrderState, now_ns: u64) -> Result<(), InvalidTransition> {
+    fn transition_to(
+        &mut self,
+        new_state: OrderState,
+        now_ns: u64,
+    ) -> Result<(), InvalidTransition> {
         if !self.state.can_transition_to(new_state) {
             return Err(InvalidTransition {
                 from: self.state,

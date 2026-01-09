@@ -129,12 +129,7 @@ impl SelfTradeGuard {
     /// Check if placing a new order would cause a self-trade.
     ///
     /// Returns `Err(SelfTradeBlock)` if the order would cross with our own.
-    pub fn check_order(
-        &self,
-        side: Side,
-        tick: Tick,
-        now_ns: u64,
-    ) -> Result<(), SelfTradeBlock> {
+    pub fn check_order(&self, side: Side, tick: Tick, now_ns: u64) -> Result<(), SelfTradeBlock> {
         // A buy order crosses if there's our sell at or below this tick
         // A sell order crosses if there's our buy at or above this tick
         let crossing_ticks = match side {
@@ -208,7 +203,8 @@ impl SelfTradeGuard {
     fn is_order_effectively_live(&self, order_id: &str, now_ns: u64) -> bool {
         if let Some(pending) = self.pending_cancels.get(order_id) {
             // Order is pending cancel - check if enough time has passed
-            let effective_cancel_time = self.config.cancel_latency_ns + self.config.cancel_margin_ns;
+            let effective_cancel_time =
+                self.config.cancel_latency_ns + self.config.cancel_margin_ns;
             let elapsed = now_ns.saturating_sub(pending.cancel_requested_ns);
 
             // Still considered live if not enough time has passed
@@ -276,12 +272,7 @@ mod tests {
     use crate::order::{Order, OrderKind, OrderType};
     use mtrader_core::{ClientOrderId, OrderReason};
 
-    fn make_order(
-        order_id: &str,
-        side: Side,
-        tick: Tick,
-        state: OrderState,
-    ) -> Order {
+    fn make_order(order_id: &str, side: Side, tick: Tick, state: OrderState) -> Order {
         let mut order = Order::new(
             ClientOrderId(format!("client-{}", order_id)),
             "asset-123".into(),

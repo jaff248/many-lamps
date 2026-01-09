@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use anyhow::Result;
-use mtrader_sim::{BacktestConfig, load_snapshots, run_backtest};
+use mtrader_sim::{load_snapshots, run_backtest, BacktestConfig};
 use std::path::Path;
 use tracing::info;
 

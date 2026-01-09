@@ -9,6 +9,7 @@ use crossterm::{
     event::{self, Event, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+use mtrader_sim::{load_snapshots, run_backtest, BacktestConfig as SimBacktestConfig};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -150,6 +151,7 @@ pub struct RiskConfig {
     pub max_position: i64,
     pub max_order_size: u64,
     pub max_bet_percentage: f64,
+    pub max_portfolio_percentage: f64,
     pub max_drawdown_bps: i64,
     pub max_loss_per_hour: i64,
     pub stop_consecutive_losses: u32,
@@ -161,7 +163,8 @@ impl Default for RiskConfig {
         Self {
             max_position: 200,
             max_order_size: 20,
-            max_bet_percentage: 2.0,
+            max_bet_percentage: 5.0,
+            max_portfolio_percentage: 20.0,
             max_drawdown_bps: 500,
             max_loss_per_hour: 100_000_000,
             stop_consecutive_losses: 10,
@@ -346,7 +349,8 @@ impl AppState {
 
     pub fn log_trade(&mut self, side: &str, size: i64, price: f64) {
         let ts = Local::now().format("%H:%M:%S.%3f").to_string();
-        self.activity_log.insert(0, format!("[{}] {} {} @ {:.4}", ts, side, size, price));
+        self.activity_log
+            .insert(0, format!("[{}] {} {} @ {:.4}", ts, side, size, price));
         self.trades_count += 1;
         self.daily_trades += 1;
         if self.activity_log.len() > 50 {
@@ -355,7 +359,8 @@ impl AppState {
     }
 
     pub fn recording_elapsed(&self) -> Option<Duration> {
-        self.recording_start.map(|s| Instant::now().duration_since(s))
+        self.recording_start
+            .map(|s| Instant::now().duration_since(s))
     }
 
     pub fn spread(&self) -> f64 {
@@ -394,14 +399,18 @@ impl App {
         let stdout = io::stdout();
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        Ok(Self { state: AppState::new(), terminal })
+        Ok(Self {
+            state: AppState::new(),
+            terminal,
+        })
     }
 
     pub fn run(&mut self) -> Result<()> {
         self.terminal.clear()?;
         self.load_replay_files();
         loop {
-            self.terminal.draw(|f| f.render_widget(&TuiApp { state: &self.state }, f.size()))?;
+            self.terminal
+                .draw(|f| f.render_widget(&TuiApp { state: &self.state }, f.size()))?;
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     self.handle_input(key);
@@ -420,7 +429,12 @@ impl App {
         if let Ok(entries) = std::fs::read_dir(path) {
             self.state.replay_files = entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map(|ext| ext == "parquet").unwrap_or(false))
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "parquet")
+                        .unwrap_or(false)
+                })
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .collect();
         }
@@ -466,9 +480,15 @@ impl App {
                 self.state.edit_field = None;
                 self.state.set_status("Edit cancelled.");
             }
-            KeyCode::Backspace => { self.state.text_input.pop(); }
-            KeyCode::Char(c) => { self.state.text_input.push(c); }
-            KeyCode::Delete => { self.state.text_input.clear(); }
+            KeyCode::Backspace => {
+                self.state.text_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.state.text_input.push(c);
+            }
+            KeyCode::Delete => {
+                self.state.text_input.clear();
+            }
             _ => {}
         }
     }
@@ -524,16 +544,46 @@ impl App {
             }
             KeyCode::Enter => {
                 self.state.current_menu = match self.state.selected_index {
-                    0 => { self.state.set_status("Paper Trading"); MenuItem::PaperTrading }
-                    1 => { self.state.set_status("Recording"); MenuItem::Record }
-                    2 => { self.state.set_status("Backtest"); MenuItem::Backtest }
-                    3 => { self.state.set_status("Replay"); MenuItem::Replay }
-                    4 => { self.state.set_status("Market Browser"); MenuItem::MarketBrowser }
-                    5 => { self.state.set_status("Live Trading"); MenuItem::LiveTrading }
-                    6 => { self.state.set_status("Strategy Settings"); MenuItem::StrategySettings }
-                    7 => { self.state.set_status("Risk Settings"); MenuItem::RiskSettings }
-                    8 => { self.state.set_status("Help"); MenuItem::Help }
-                    _ => { self.state.set_status("Goodbye!"); MenuItem::Quit }
+                    0 => {
+                        self.state.set_status("Paper Trading");
+                        MenuItem::PaperTrading
+                    }
+                    1 => {
+                        self.state.set_status("Recording");
+                        MenuItem::Record
+                    }
+                    2 => {
+                        self.state.set_status("Backtest");
+                        MenuItem::Backtest
+                    }
+                    3 => {
+                        self.state.set_status("Replay");
+                        MenuItem::Replay
+                    }
+                    4 => {
+                        self.state.set_status("Market Browser");
+                        MenuItem::MarketBrowser
+                    }
+                    5 => {
+                        self.state.set_status("Live Trading");
+                        MenuItem::LiveTrading
+                    }
+                    6 => {
+                        self.state.set_status("Strategy Settings");
+                        MenuItem::StrategySettings
+                    }
+                    7 => {
+                        self.state.set_status("Risk Settings");
+                        MenuItem::RiskSettings
+                    }
+                    8 => {
+                        self.state.set_status("Help");
+                        MenuItem::Help
+                    }
+                    _ => {
+                        self.state.set_status("Goodbye!");
+                        MenuItem::Quit
+                    }
                 };
             }
             KeyCode::Esc | KeyCode::Char('q') => self.state.current_menu = MenuItem::Quit,
@@ -547,7 +597,10 @@ impl App {
                 // Toggle connection - shows persistent state
                 self.state.best_bid = self.state.market.price - 0.005;
                 self.state.best_ask = self.state.market.price + 0.005;
-                self.state.set_status(&format!("Connected: Bid {:.4} Ask {:.4}", self.state.best_bid, self.state.best_ask));
+                self.state.set_status(&format!(
+                    "Connected: Bid {:.4} Ask {:.4}",
+                    self.state.best_bid, self.state.best_ask
+                ));
             }
             KeyCode::Char('r') => {
                 self.state.is_recording = !self.state.is_recording;
@@ -561,10 +614,19 @@ impl App {
                 }
             }
             KeyCode::Char('s') => {
-                let strats = ["maker_mm", "bundle_maker", "unaffected_arb", "rebalancing_arb"];
-                let idx = strats.iter().position(|&s| s == self.state.strategy_name).unwrap_or(0);
+                let strats = [
+                    "maker_mm",
+                    "bundle_maker",
+                    "unaffected_arb",
+                    "rebalancing_arb",
+                ];
+                let idx = strats
+                    .iter()
+                    .position(|&s| s == self.state.strategy_name)
+                    .unwrap_or(0);
                 self.state.strategy_name = strats[(idx + 1) % strats.len()].to_string();
-                self.state.set_status(&format!("Strategy: {}", self.state.strategy_name));
+                self.state
+                    .set_status(&format!("Strategy: {}", self.state.strategy_name));
             }
             KeyCode::Char('a') => {
                 // Auto-trading toggle
@@ -572,7 +634,8 @@ impl App {
                 match self.state.auto_trading {
                     AutoTradingState::Disabled => {
                         self.state.auto_trading = AutoTradingState::Running;
-                        self.state.set_status("Auto-trading ENABLED. Strategy is now active.");
+                        self.state
+                            .set_status("Auto-trading ENABLED. Strategy is now active.");
                     }
                     AutoTradingState::Running => {
                         self.state.auto_trading = AutoTradingState::Paused;
@@ -585,7 +648,8 @@ impl App {
                     AutoTradingState::Halted(_) => {
                         self.state.auto_trading = AutoTradingState::Disabled;
                         self.state.circuit_breaker_tripped = false;
-                        self.state.set_status("Auto-trading reset. Circuit breaker cleared.");
+                        self.state
+                            .set_status("Auto-trading reset. Circuit breaker cleared.");
                     }
                 }
                 if was_halted {
@@ -599,14 +663,21 @@ impl App {
             }
             KeyCode::Char('l') => {
                 // Update order book - show persistent state
-                self.state.set_status(&format!("Book: Bid {:.4} Ask {:.4} Spread {:.4}", self.state.best_bid, self.state.best_ask, self.state.spread()));
+                self.state.set_status(&format!(
+                    "Book: Bid {:.4} Ask {:.4} Spread {:.4}",
+                    self.state.best_bid,
+                    self.state.best_ask,
+                    self.state.spread()
+                ));
             }
             KeyCode::Char('p') => {
                 // FIXED: Show position and PnL - persistent values
-                self.state.set_status(&format!("Position: {} | Realized PnL: ${:.2} | Unrealized: ${:.2}", 
-                    self.state.position, 
-                    self.state.realized_pnl as f64 / 1e6, 
-                    self.state.unrealized_pnl as f64 / 1e6));
+                self.state.set_status(&format!(
+                    "Position: {} | Realized PnL: ${:.2} | Unrealized: ${:.2}",
+                    self.state.position,
+                    self.state.realized_pnl as f64 / 1e6,
+                    self.state.unrealized_pnl as f64 / 1e6
+                ));
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.state.auto_trading = AutoTradingState::Disabled;
@@ -648,25 +719,48 @@ impl App {
     fn backtest(&mut self, key: event::KeyEvent) {
         match key.code {
             KeyCode::Enter => {
-                // Run backtest with selected strategy and parameters
-                let roi = 5.0 + (self.state.position as f64 * 0.5 % 20.0); // Simulated
-                let end_balance = self.state.backtest_balance * (1.0 + roi / 100.0);
-                let win_rate = if self.state.trades_count > 0 {
-                    (self.state.trades_count * 60 / 100) as u64
-                } else {
-                    0
-                };
-                self.state.backtest_results = Some(format_backtest_report(
-                    self.state.backtest_balance,
-                    end_balance,
-                    roi,
-                    self.state.trades_count,
-                    win_rate,
-                    win_rate,
-                    0,
-                    0,
-                ));
-                self.state.set_status(&format!("Backtest complete. ROI: {:.2}%", roi));
+                let path = std::path::Path::new(&self.state.backtest_dir);
+                match load_snapshots(path) {
+                    Ok(snapshots) if !snapshots.is_empty() => {
+                        let config = SimBacktestConfig {
+                            starting_balance_micro: (self.state.backtest_balance * 1_000_000.0)
+                                as i64,
+                            leg_size: self.state.strategy_params.order_size,
+                            sum_target: self.state.strategy_params.sum_target,
+                            dip_threshold: self.state.strategy_params.dip_threshold,
+                            window_minutes: self.state.strategy_params.window_minutes,
+                            dip_window_ms: 3_000,
+                            fee_rate_bps: 50,
+                            spread_bps: self.state.strategy_params.spread_bps as f64,
+                            leg2_timeout_seconds: 60,
+                        };
+                        let report = run_backtest(&snapshots, &config);
+                        let end_balance = report.ending_balance_micro as f64 / 1_000_000.0;
+                        let roi = report.roi_pct;
+                        self.state.backtest_results = Some(format_backtest_report(
+                            self.state.backtest_balance,
+                            end_balance,
+                            roi,
+                            report.cycles,
+                            report.leg1_triggers,
+                            report.leg2_triggers,
+                            report.stop_losses,
+                            report.round_losses,
+                        ));
+                        self.state
+                            .set_status(&format!("Backtest complete. ROI: {:.2}%", roi));
+                    }
+                    Ok(_) => {
+                        self.state.backtest_results =
+                            Some("No snapshots found in directory.".to_string());
+                        self.state
+                            .set_status("Backtest failed: no snapshots found.");
+                    }
+                    Err(err) => {
+                        self.state.backtest_results = Some(format!("Backtest error: {err}"));
+                        self.state.set_status("Backtest failed. Check logs.");
+                    }
+                }
             }
             KeyCode::Char('e') => {
                 self.state.input_mode = InputMode::Editing(EditField::BacktestDir);
@@ -678,7 +772,10 @@ impl App {
                     5000.0 => 10000.0,
                     _ => 1000.0,
                 };
-                self.state.set_status(&format!("Starting balance: ${:.0}", self.state.backtest_balance));
+                self.state.set_status(&format!(
+                    "Starting balance: ${:.0}",
+                    self.state.backtest_balance
+                ));
             }
             KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
             _ => {}
@@ -690,13 +787,19 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if self.state.selected_replay > 0 => {
                 self.state.selected_replay -= 1;
             }
-            KeyCode::Down | KeyCode::Char('j') if self.state.selected_replay < self.state.replay_files.len().saturating_sub(1) => {
+            KeyCode::Down | KeyCode::Char('j')
+                if self.state.selected_replay < self.state.replay_files.len().saturating_sub(1) =>
+            {
                 self.state.selected_replay += 1;
             }
             KeyCode::Enter => {
                 if !self.state.replay_files[0].contains("No recordings") {
                     self.state.replay_paused = !self.state.replay_paused;
-                    self.state.set_status(if self.state.replay_paused { "Paused" } else { "Playing" });
+                    self.state.set_status(if self.state.replay_paused {
+                        "Paused"
+                    } else {
+                        "Playing"
+                    });
                 }
             }
             KeyCode::Char('1') => {
@@ -721,20 +824,24 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if self.state.selected_market > 0 => {
                 self.state.selected_market -= 1;
             }
-            KeyCode::Down | KeyCode::Char('j') if self.state.selected_market < self.state.markets_list.len().saturating_sub(1) => {
+            KeyCode::Down | KeyCode::Char('j')
+                if self.state.selected_market < self.state.markets_list.len().saturating_sub(1) =>
+            {
                 self.state.selected_market += 1;
             }
             KeyCode::Enter => {
                 if !self.state.markets_list.is_empty() {
                     self.state.market = self.state.markets_list[self.state.selected_market].clone();
-                    self.state.set_status(&format!("Selected: {}", self.state.market.name));
+                    self.state
+                        .set_status(&format!("Selected: {}", self.state.market.name));
                 }
             }
             KeyCode::Char('t') => {
                 // Trade this market - go to paper trading
                 if !self.state.markets_list.is_empty() {
                     self.state.market = self.state.markets_list[self.state.selected_market].clone();
-                    self.state.set_status(&format!("Trading: {}", self.state.market.name));
+                    self.state
+                        .set_status(&format!("Trading: {}", self.state.market.name));
                     self.state.current_menu = MenuItem::PaperTrading;
                 }
             }
@@ -747,7 +854,8 @@ impl App {
         match key.code {
             KeyCode::Enter => {
                 self.state.input_mode = InputMode::Confirming(ConfirmAction::EnableLiveTrading);
-                self.state.set_status("Press Enter to confirm live trading...");
+                self.state
+                    .set_status("Press Enter to confirm live trading...");
             }
             KeyCode::Char('e') => {
                 self.state.input_mode = InputMode::Editing(EditField::WalletAddress);
@@ -766,7 +874,9 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.state.selected_index = self.state.selected_index.saturating_add(1);
-                if self.state.selected_index > 7 { self.state.selected_index = 0; }
+                if self.state.selected_index > 7 {
+                    self.state.selected_index = 0;
+                }
             }
             KeyCode::Left | KeyCode::Char('-') => {
                 self.adjust_strategy_param(-1);
@@ -775,10 +885,19 @@ impl App {
                 self.adjust_strategy_param(1);
             }
             KeyCode::Char('s') => {
-                let strats = ["maker_mm", "bundle_maker", "unaffected_arb", "rebalancing_arb"];
-                let idx = strats.iter().position(|&s| s == self.state.strategy_name).unwrap_or(0);
+                let strats = [
+                    "maker_mm",
+                    "bundle_maker",
+                    "unaffected_arb",
+                    "rebalancing_arb",
+                ];
+                let idx = strats
+                    .iter()
+                    .position(|&s| s == self.state.strategy_name)
+                    .unwrap_or(0);
                 self.state.strategy_name = strats[(idx + 1) % strats.len()].to_string();
-                self.state.set_status(&format!("Strategy: {}", self.state.strategy_name));
+                self.state
+                    .set_status(&format!("Strategy: {}", self.state.strategy_name));
             }
             KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
             _ => {}
@@ -788,16 +907,44 @@ impl App {
     fn adjust_strategy_param(&mut self, delta: i32) {
         match self.state.selected_index {
             0 => {
-                let new_val = (self.state.strategy_params.spread_bps as i32 + delta * 5).max(10).min(200);
+                let new_val =
+                    (self.state.strategy_params.spread_bps as i32 + delta * 5).clamp(10, 200);
                 self.state.strategy_params.spread_bps = new_val as u16;
             }
             1 => {
-                let new_val = (self.state.strategy_params.order_size as i64 + delta as i64).max(1).max(100);
+                let new_val =
+                    (self.state.strategy_params.order_size as i64 + delta as i64).clamp(1, 100);
                 self.state.strategy_params.order_size = new_val as u64;
             }
             2 => {
-                let new_val = (self.state.strategy_params.num_levels as i32 + delta).max(1).min(5);
+                let new_val = (self.state.strategy_params.num_levels as i32 + delta).clamp(1, 5);
                 self.state.strategy_params.num_levels = new_val as u8;
+            }
+            3 => {
+                if delta != 0 {
+                    self.state.strategy_params.inventory_skew =
+                        !self.state.strategy_params.inventory_skew;
+                }
+            }
+            4 => {
+                let new_val =
+                    (self.state.strategy_params.sum_target + delta as f64 * 0.01).clamp(0.50, 1.50);
+                self.state.strategy_params.sum_target = new_val;
+            }
+            5 => {
+                let new_val = (self.state.strategy_params.edge_threshold_bps as i32 + delta * 5)
+                    .clamp(5, 200);
+                self.state.strategy_params.edge_threshold_bps = new_val as u16;
+            }
+            6 => {
+                let new_val = (self.state.strategy_params.dip_threshold + delta as f64 * 0.005)
+                    .clamp(0.0, 0.2);
+                self.state.strategy_params.dip_threshold = new_val;
+            }
+            7 => {
+                let new_val = (self.state.strategy_params.window_minutes as i64 + delta as i64 * 5)
+                    .clamp(5, 240);
+                self.state.strategy_params.window_minutes = new_val as u64;
             }
             _ => {}
         }
@@ -811,7 +958,9 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.state.selected_index = self.state.selected_index.saturating_add(1);
-                if self.state.selected_index > 5 { self.state.selected_index = 0; }
+                if self.state.selected_index > 7 {
+                    self.state.selected_index = 0;
+                }
             }
             KeyCode::Left | KeyCode::Char('-') => {
                 self.adjust_risk_param(-1);
@@ -832,20 +981,46 @@ impl App {
     fn adjust_risk_param(&mut self, delta: i32) {
         match self.state.selected_index {
             0 => {
-                let new_val = (self.state.risk_config.max_position as i64 + delta as i64 * 10).max(10).max(1000);
+                let new_val = (self.state.risk_config.max_position as i64 + delta as i64 * 10)
+                    .clamp(10, 1000);
                 self.state.risk_config.max_position = new_val;
             }
             1 => {
-                let new_val = (self.state.risk_config.max_order_size as i64 + delta as i64).max(1).max(100);
+                let new_val =
+                    (self.state.risk_config.max_order_size as i64 + delta as i64).clamp(1, 100);
                 self.state.risk_config.max_order_size = new_val as u64;
             }
             2 => {
-                let new_val = (self.state.risk_config.max_drawdown_bps as i64 + delta as i64 * 50).max(100).max(1000);
-                self.state.risk_config.max_drawdown_bps = new_val;
+                let new_val = (self.state.risk_config.max_bet_percentage + delta as f64 * 0.5)
+                    .clamp(0.5, 10.0);
+                self.state.risk_config.max_bet_percentage = new_val;
             }
             3 => {
-                let new_val = (self.state.risk_config.stop_consecutive_losses as i32 + delta).max(3).min(20);
+                let new_val = (self.state.risk_config.max_portfolio_percentage
+                    + delta as f64 * 1.0)
+                    .clamp(5.0, 50.0);
+                self.state.risk_config.max_portfolio_percentage = new_val;
+            }
+            4 => {
+                let new_val = (self.state.risk_config.max_drawdown_bps as i64 + delta as i64 * 50)
+                    .clamp(100, 2000);
+                self.state.risk_config.max_drawdown_bps = new_val;
+            }
+            5 => {
+                let new_val = (self.state.risk_config.max_loss_per_hour as i64
+                    + delta as i64 * 10_000_000)
+                    .clamp(10_000_000, 1_000_000_000);
+                self.state.risk_config.max_loss_per_hour = new_val;
+            }
+            6 => {
+                let new_val =
+                    (self.state.risk_config.stop_consecutive_losses as i32 + delta).clamp(3, 20);
                 self.state.risk_config.stop_consecutive_losses = new_val as u32;
+            }
+            7 => {
+                let new_val = (self.state.risk_config.max_daily_trades as i64 + delta as i64 * 10)
+                    .clamp(0, 1000);
+                self.state.risk_config.max_daily_trades = new_val as u64;
             }
             _ => {}
         }
@@ -920,9 +1095,15 @@ fn render_main_menu(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buf
     ];
     let mut lines = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let prefix = if i == state.selected_index { "▶ " } else { "  " };
+        let prefix = if i == state.selected_index {
+            "▶ "
+        } else {
+            "  "
+        };
         let style = if i == state.selected_index {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -955,14 +1136,18 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         AutoTradingState::Paused => "⏸ PAUSED".to_string(),
         AutoTradingState::Halted(ref r) => format!("HALTED: {}", r),
     };
-    let header = format!(" Paper Trading | {} | {} | [q] Menu ", state.market.name, auto_status);
+    let header = format!(
+        " Paper Trading | {} | {} | [q] Menu ",
+        state.market.name, auto_status
+    );
     Paragraph::new(header)
         .style(Style::default().bg(Color::Blue).fg(Color::White))
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
     // Two column layout
-    let mid = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[1]);
+    let mid = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[1]);
 
     // Market data panel
     let market_content = format!(
@@ -975,7 +1160,11 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
 
     // Account panel with FIXED position display (persistent, not random)
     let drawdown = state.drawdown_bps();
-    let drawdown_color = if drawdown > state.risk_config.max_drawdown_bps as i64 { Color::Red } else { Color::Yellow };
+    let drawdown_color = if drawdown > state.risk_config.max_drawdown_bps as i64 {
+        Color::Red
+    } else {
+        Color::Yellow
+    };
     let account_content = format!(
         "Position & PnL\n\nPosition: {}\nRealized PnL: ${:.2}\nUnrealized: ${:.2}\nFees: ${:.2}\nTrades: {}\nDrawdown: {}bps ({:.2}%)\n\n[c] Connect [a] Auto\n[l] Book [p] Position\n[s] Strategy [r] Record",
         state.position,
@@ -991,7 +1180,12 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         .render(mid[1], buf);
 
     // Activity log
-    let log: Vec<ListItem> = state.activity_log.iter().take(5).map(|a| ListItem::new(a.clone())).collect();
+    let log: Vec<ListItem> = state
+        .activity_log
+        .iter()
+        .take(5)
+        .map(|a| ListItem::new(a.clone()))
+        .collect();
     List::new(log)
         .block(Block::default().title(" Activity ").borders(Borders::ALL))
         .render(chunks[2], buf);
@@ -1005,17 +1199,30 @@ fn render_record(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer
     ])
     .split(area);
 
-    let rec = if state.is_recording { " 🔴 RECORDING" } else { "" };
+    let rec = if state.is_recording {
+        " 🔴 RECORDING"
+    } else {
+        ""
+    };
     Paragraph::new(format!(" Recording{} ", rec))
         .style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
-    let elapsed = state.recording_elapsed().map(|d| format!("{:.1}s", d.as_secs_f64())).unwrap_or_default();
+    let elapsed = state
+        .recording_elapsed()
+        .map(|d| format!("{:.1}s", d.as_secs_f64()))
+        .unwrap_or_default();
     let content = if state.is_recording {
-        format!("Market: {}\n\nEvents: {}\nDuration: {}\n\n[Enter] Stop\n[a] Add Market\n[q] Back", state.market.condition_id, state.recording_events, elapsed)
+        format!(
+            "Market: {}\n\nEvents: {}\nDuration: {}\n\n[Enter] Stop\n[a] Add Market\n[q] Back",
+            state.market.condition_id, state.recording_events, elapsed
+        )
     } else {
-        format!("Market: {}\n\n[Enter] Start Recording\n[a] Add Market\n[q] Back", state.market.condition_id)
+        format!(
+            "Market: {}\n\n[Enter] Start Recording\n[a] Add Market\n[q] Back",
+            state.market.condition_id
+        )
     };
     Paragraph::new(content)
         .block(Block::default().title(" Recording ").borders(Borders::ALL))
@@ -1066,16 +1273,29 @@ fn render_replay(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer
     ])
     .split(area);
 
-    let status = if state.replay_paused { "⏸ PAUSED" } else { "▶ PLAYING" };
+    let status = if state.replay_paused {
+        "⏸ PAUSED"
+    } else {
+        "▶ PLAYING"
+    };
     Paragraph::new(format!(" Replay | {} | {}x ", status, state.replay_speed))
         .style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
-    let items: Vec<ListItem> = state.replay_files.iter().enumerate().map(|(i, f)| {
-        let marker = if i == state.selected_replay { "▶" } else { " " };
-        ListItem::new(format!("{} {}", marker, f))
-    }).collect();
+    let items: Vec<ListItem> = state
+        .replay_files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let marker = if i == state.selected_replay {
+                "▶"
+            } else {
+                " "
+            };
+            ListItem::new(format!("{} {}", marker, f))
+        })
+        .collect();
     List::new(items)
         .block(Block::default().title(" Recordings ").borders(Borders::ALL))
         .render(chunks[1], buf);
@@ -1097,10 +1317,25 @@ fn render_market_browser(state: &AppState, area: Rect, buf: &mut ratatui::buffer
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
-    let items: Vec<ListItem> = state.markets_list.iter().enumerate().map(|(i, m)| {
-        let marker = if i == state.selected_market { "▶" } else { " " };
-        ListItem::new(format!("{} {} | {:.2}% | Vol: {:.0}", marker, m.name, m.price * 100.0, m.volume))
-    }).collect();
+    let items: Vec<ListItem> = state
+        .markets_list
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let marker = if i == state.selected_market {
+                "▶"
+            } else {
+                " "
+            };
+            ListItem::new(format!(
+                "{} {} | {:.2}% | Vol: {:.0}",
+                marker,
+                m.name,
+                m.price * 100.0,
+                m.volume
+            ))
+        })
+        .collect();
     List::new(items)
         .block(Block::default().title(" Markets ").borders(Borders::ALL))
         .render(chunks[1], buf);
@@ -1133,7 +1368,11 @@ fn render_live_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer::
         state.risk_config.stop_consecutive_losses
     );
     Paragraph::new(content)
-        .block(Block::default().title(" Live Trading ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Live Trading ")
+                .borders(Borders::ALL),
+        )
         .render(chunks[1], buf);
     Paragraph::new(" [Enter] Enable  [e] Wallet  [q] Back ")
         .style(Style::default().bg(Color::DarkGray))
@@ -1157,17 +1396,33 @@ fn render_strategy_settings(state: &AppState, area: Rect, buf: &mut ratatui::buf
         format!("Spread (bps): {}", state.strategy_params.spread_bps),
         format!("Order Size: {}", state.strategy_params.order_size),
         format!("Levels: {}", state.strategy_params.num_levels),
-        format!("Inventory Skew: {}", if state.strategy_params.inventory_skew { "ON" } else { "OFF" }),
+        format!(
+            "Inventory Skew: {}",
+            if state.strategy_params.inventory_skew {
+                "ON"
+            } else {
+                "OFF"
+            }
+        ),
         format!("Sum Target: {}", state.strategy_params.sum_target),
-        format!("Edge Threshold: {}bps", state.strategy_params.edge_threshold_bps),
+        format!(
+            "Edge Threshold: {}bps",
+            state.strategy_params.edge_threshold_bps
+        ),
         format!("Dip Threshold: {}", state.strategy_params.dip_threshold),
         format!("Window (min): {}", state.strategy_params.window_minutes),
     ];
     let mut lines = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let marker = if i == state.selected_index { "▶" } else { " " };
+        let marker = if i == state.selected_index {
+            "▶"
+        } else {
+            " "
+        };
         let style = if i == state.selected_index {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -1197,19 +1452,45 @@ fn render_risk_settings(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
+    let daily_limit = if state.risk_config.max_daily_trades == 0 {
+        "Unlimited".to_string()
+    } else {
+        state.risk_config.max_daily_trades.to_string()
+    };
     let items = [
         format!("Max Position: {}", state.risk_config.max_position),
         format!("Max Order Size: {}", state.risk_config.max_order_size),
         format!("Max Bet %: {:.1}", state.risk_config.max_bet_percentage),
-        format!("Max Drawdown: {}bps ({:.1}%)", state.risk_config.max_drawdown_bps, state.risk_config.max_drawdown_bps as f64 / 100.0),
-        format!("Max Loss/Hour: ${:.0}", state.risk_config.max_loss_per_hour as f64 / 1e6),
-        format!("Stop After Losses: {}", state.risk_config.stop_consecutive_losses),
+        format!(
+            "Max Portfolio %: {:.1}",
+            state.risk_config.max_portfolio_percentage
+        ),
+        format!(
+            "Max Drawdown: {}bps ({:.1}%)",
+            state.risk_config.max_drawdown_bps,
+            state.risk_config.max_drawdown_bps as f64 / 100.0
+        ),
+        format!(
+            "Max Loss/Hour: ${:.0}",
+            state.risk_config.max_loss_per_hour as f64 / 1e6
+        ),
+        format!(
+            "Stop After Losses: {}",
+            state.risk_config.stop_consecutive_losses
+        ),
+        format!("Daily Trade Limit: {}", daily_limit),
     ];
     let mut lines = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let marker = if i == state.selected_index { "▶" } else { " " };
+        let marker = if i == state.selected_index {
+            "▶"
+        } else {
+            " "
+        };
         let style = if i == state.selected_index {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -1299,7 +1580,7 @@ mod tests {
         let running = AutoTradingState::Running;
         let paused = AutoTradingState::Paused;
         let halted = AutoTradingState::Halted("Max drawdown".to_string());
-        
+
         assert_ne!(disabled, running);
         assert_ne!(running, paused);
         assert_ne!(paused, halted);
@@ -1319,8 +1600,14 @@ mod tests {
 
     #[test]
     fn test_confirm_action_equality() {
-        assert_eq!(ConfirmAction::EnableLiveTrading, ConfirmAction::EnableLiveTrading);
-        assert_ne!(ConfirmAction::EnableLiveTrading, ConfirmAction::ClearPosition);
+        assert_eq!(
+            ConfirmAction::EnableLiveTrading,
+            ConfirmAction::EnableLiveTrading
+        );
+        assert_ne!(
+            ConfirmAction::EnableLiveTrading,
+            ConfirmAction::ClearPosition
+        );
     }
 
     #[test]
@@ -1336,6 +1623,8 @@ mod tests {
         let config = RiskConfig::default();
         assert_eq!(config.max_position, 200);
         assert_eq!(config.max_order_size, 20);
+        assert_eq!(config.max_bet_percentage, 5.0);
+        assert_eq!(config.max_portfolio_percentage, 20.0);
         assert_eq!(config.max_drawdown_bps, 500);
         assert_eq!(config.stop_consecutive_losses, 10);
     }

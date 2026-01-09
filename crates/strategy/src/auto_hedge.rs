@@ -135,7 +135,11 @@ impl AutoHedgeStrategy {
         let Some(history) = self.price_history.get(asset_id) else {
             return false;
         };
-        let max_tick = history.iter().map(|(_, tick)| *tick).max().unwrap_or(current_tick);
+        let max_tick = history
+            .iter()
+            .map(|(_, tick)| *tick)
+            .max()
+            .unwrap_or(current_tick);
         if max_tick == 0 {
             return false;
         }
@@ -351,7 +355,13 @@ mod tests {
         let mut actions = strategy.on_update(&context("up", 0, 6000));
         actions.extend(strategy.on_update(&context("up", 1_000_000, 5000)));
 
-        assert!(actions.iter().any(|action| matches!(action, StrategyAction::PlaceOrder { side: Side::Buy, .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            StrategyAction::PlaceOrder {
+                side: Side::Buy,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -372,6 +382,12 @@ mod tests {
         strategy.on_update(&context("up", 1_000_000, 5000));
         let actions = strategy.on_update(&context("down", 2_000_000, 4500));
 
-        assert!(actions.iter().any(|action| matches!(action, StrategyAction::PlaceOrder { side: Side::Buy, .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            StrategyAction::PlaceOrder {
+                side: Side::Buy,
+                ..
+            }
+        )));
     }
 }

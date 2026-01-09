@@ -6,9 +6,9 @@
 //! - Tick validation and error handling
 
 pub mod array_book;
-pub mod sync;
 pub mod error;
+pub mod sync;
 
 pub use array_book::ArrayBook;
-pub use sync::{BookSync, BookSyncState, SyncResult};
 pub use error::BookError;
+pub use sync::{BookSync, BookSyncState, SyncResult};

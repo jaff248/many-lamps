@@ -6,9 +6,7 @@ use mtrader_core::clock::MonotonicClock;
 use mtrader_core::events::{CoreEvent, EventTimestamps, MarketDataEvent};
 use mtrader_core::{MarketId, Side, TokenId};
 use mtrader_gateway::{ParsedEvent, WsClient, WsConfig};
-use mtrader_recorder::{
-    event_recorder::EventRecorderConfig, EventRecorder, FrameRecorder,
-};
+use mtrader_recorder::{event_recorder::EventRecorderConfig, EventRecorder, FrameRecorder};
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{error, info, warn};

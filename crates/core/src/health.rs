@@ -21,18 +21,18 @@ pub enum SafeModeReason {
     /// WebSocket lag exceeds threshold
     WsLagExceeded { lag_ms: u64, threshold_ms: u64 },
     /// REST reconciliation found mismatch
-    RestReconciliationMismatch { 
+    RestReconciliationMismatch {
         token_id: TokenId,
         mismatch_type: ReconciliationMismatch,
     },
     /// Tick size change observed (must resnapshot)
-    TickSizeChange { 
+    TickSizeChange {
         token_id: TokenId,
         old_tick_size: u16,
         new_tick_size: u16,
     },
     /// Parser error rate exceeded threshold
-    ParserErrorRateExceeded { 
+    ParserErrorRateExceeded {
         error_count: u32,
         window_ms: u64,
         threshold: u32,
@@ -60,10 +60,23 @@ pub enum SafeModeReason {
 /// Types of reconciliation mismatches
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReconciliationMismatch {
-    BestBidMismatch { local: Option<u16>, remote: Option<u16> },
-    BestAskMismatch { local: Option<u16>, remote: Option<u16> },
-    LevelSizeMismatch { tick: u16, local: u64, remote: u64 },
-    TickSizeMismatch { local: u16, remote: u16 },
+    BestBidMismatch {
+        local: Option<u16>,
+        remote: Option<u16>,
+    },
+    BestAskMismatch {
+        local: Option<u16>,
+        remote: Option<u16>,
+    },
+    LevelSizeMismatch {
+        tick: u16,
+        local: u64,
+        remote: u64,
+    },
+    TickSizeMismatch {
+        local: u16,
+        remote: u16,
+    },
 }
 
 /// System health state
@@ -124,7 +137,7 @@ impl Default for HealthConfig {
 /// Rolling window counter for rate limiting
 #[derive(Debug, Clone)]
 struct RollingCounter {
-    events: Vec<u64>,  // timestamps of events
+    events: Vec<u64>, // timestamps of events
     window_ms: u64,
 }
 
@@ -224,37 +237,37 @@ impl SystemHealth {
     pub fn set_book_synced(&mut self, token_id: &TokenId, synced: bool, now_ms: u64) {
         let health = self.token_health.entry(token_id.clone()).or_default();
         health.book_synced = synced;
-        
+
         if !synced {
-            self.add_reason(SafeModeReason::BookNotSynced { 
-                token_id: token_id.clone() 
+            self.add_reason(SafeModeReason::BookNotSynced {
+                token_id: token_id.clone(),
             });
         } else {
-            self.remove_reason_matching(|r| {
-                matches!(r, SafeModeReason::BookNotSynced { token_id: t } if t == token_id)
-            });
+            self.remove_reason_matching(
+                |r| matches!(r, SafeModeReason::BookNotSynced { token_id: t } if t == token_id),
+            );
         }
-        
+
         self.update_state(now_ms);
     }
 
     /// Record WS connection status
     pub fn set_ws_connected(&mut self, connected: bool, now_ms: u64) {
         self.ws_connected = connected;
-        
+
         if !connected {
             self.add_reason(SafeModeReason::WsDisconnected);
         } else {
             self.remove_reason_matching(|r| matches!(r, SafeModeReason::WsDisconnected));
         }
-        
+
         self.update_state(now_ms);
     }
 
     /// Record WS lag measurement
     pub fn record_ws_lag(&mut self, lag_ms: u64, now_ms: u64) {
         self.ws_lag_ms = lag_ms;
-        
+
         if lag_ms > self.config.max_ws_lag_ms {
             self.add_reason(SafeModeReason::WsLagExceeded {
                 lag_ms,
@@ -263,7 +276,7 @@ impl SystemHealth {
         } else {
             self.remove_reason_matching(|r| matches!(r, SafeModeReason::WsLagExceeded { .. }));
         }
-        
+
         self.update_state(now_ms);
     }
 
@@ -271,7 +284,7 @@ impl SystemHealth {
     pub fn record_parser_error(&mut self, now_ms: u64) {
         self.parser_errors.record(now_ms);
         let count = self.parser_errors.count(now_ms);
-        
+
         if count >= self.config.parser_error_threshold {
             self.add_reason(SafeModeReason::ParserErrorRateExceeded {
                 error_count: count,
@@ -279,7 +292,7 @@ impl SystemHealth {
                 threshold: self.config.parser_error_threshold,
             });
         }
-        
+
         self.update_state(now_ms);
     }
 
@@ -287,7 +300,7 @@ impl SystemHealth {
     pub fn record_order_reject(&mut self, now_ms: u64) {
         self.order_rejects.record(now_ms);
         let count = self.order_rejects.count(now_ms);
-        
+
         if count >= self.config.order_reject_threshold {
             self.add_reason(SafeModeReason::OrderRejectRateExceeded {
                 reject_count: count,
@@ -295,7 +308,7 @@ impl SystemHealth {
                 threshold: self.config.order_reject_threshold,
             });
         }
-        
+
         self.update_state(now_ms);
     }
 
@@ -309,21 +322,21 @@ impl SystemHealth {
     ) {
         // Mark book as not synced
         self.set_book_synced(token_id, false, now_ms);
-        
+
         self.add_reason(SafeModeReason::TickSizeChange {
             token_id: token_id.clone(),
             old_tick_size,
             new_tick_size,
         });
-        
+
         self.update_state(now_ms);
     }
 
     /// Clear tick size change reason after successful resnapshot
     pub fn clear_tick_size_change(&mut self, token_id: &TokenId, now_ms: u64) {
-        self.remove_reason_matching(|r| {
-            matches!(r, SafeModeReason::TickSizeChange { token_id: t, .. } if t == token_id)
-        });
+        self.remove_reason_matching(
+            |r| matches!(r, SafeModeReason::TickSizeChange { token_id: t, .. } if t == token_id),
+        );
         self.update_state(now_ms);
     }
 
@@ -335,23 +348,23 @@ impl SystemHealth {
         now_ms: u64,
     ) {
         self.set_book_synced(token_id, false, now_ms);
-        
+
         self.add_reason(SafeModeReason::RestReconciliationMismatch {
             token_id: token_id.clone(),
             mismatch_type: mismatch,
         });
-        
+
         self.update_state(now_ms);
     }
 
     /// Check exchange timestamp for clock anomaly
     pub fn check_clock(&mut self, token_id: &TokenId, exchange_ts: u64, now_ms: u64) -> bool {
         let health = self.token_health.entry(token_id.clone()).or_default();
-        
+
         if let Some(last_ts) = health.last_exchange_ts {
             // Allow some tolerance for clock skew
             let min_expected = last_ts.saturating_sub(self.config.clock_backward_tolerance_ms);
-            
+
             if exchange_ts < min_expected {
                 self.add_reason(SafeModeReason::ClockAnomaly {
                     expected_min_ts: min_expected,
@@ -362,7 +375,7 @@ impl SystemHealth {
                 return false;
             }
         }
-        
+
         health.last_exchange_ts = Some(exchange_ts);
         true
     }
@@ -384,22 +397,26 @@ impl SystemHealth {
         // Prune time-based counters
         self.parser_errors.prune(now_ms);
         self.order_rejects.prune(now_ms);
-        
+
         // Check if parser errors are now below threshold
         if self.parser_errors.count(now_ms) < self.config.parser_error_threshold {
-            self.remove_reason_matching(|r| matches!(r, SafeModeReason::ParserErrorRateExceeded { .. }));
+            self.remove_reason_matching(|r| {
+                matches!(r, SafeModeReason::ParserErrorRateExceeded { .. })
+            });
         }
-        
+
         // Check if order rejects are now below threshold
         if self.order_rejects.count(now_ms) < self.config.order_reject_threshold {
-            self.remove_reason_matching(|r| matches!(r, SafeModeReason::OrderRejectRateExceeded { .. }));
+            self.remove_reason_matching(|r| {
+                matches!(r, SafeModeReason::OrderRejectRateExceeded { .. })
+            });
         }
-        
+
         // Check WS lag
         if self.ws_lag_ms <= self.config.max_ws_lag_ms {
             self.remove_reason_matching(|r| matches!(r, SafeModeReason::WsLagExceeded { .. }));
         }
-        
+
         self.update_state(now_ms);
         self.state.is_healthy()
     }
@@ -411,7 +428,11 @@ impl SystemHealth {
 
     fn add_reason(&mut self, reason: SafeModeReason) {
         // Avoid duplicates of same type
-        if !self.active_reasons.iter().any(|r| std::mem::discriminant(r) == std::mem::discriminant(&reason)) {
+        if !self
+            .active_reasons
+            .iter()
+            .any(|r| std::mem::discriminant(r) == std::mem::discriminant(&reason))
+        {
             self.active_reasons.push(reason);
         }
     }
@@ -463,9 +484,9 @@ mod tests {
     fn test_book_not_synced_triggers_safe_mode() {
         let mut health = make_health();
         let token = TokenId("123".to_string());
-        
+
         health.set_book_synced(&token, false, 1000);
-        
+
         assert!(health.state().is_safe_mode());
         assert!(!health.can_place_orders());
         assert!(health.can_cancel_orders()); // Cancels always allowed
@@ -475,10 +496,10 @@ mod tests {
     fn test_book_synced_clears_safe_mode() {
         let mut health = make_health();
         let token = TokenId("123".to_string());
-        
+
         health.set_book_synced(&token, false, 1000);
         assert!(health.state().is_safe_mode());
-        
+
         health.set_book_synced(&token, true, 2000);
         assert!(health.state().is_healthy());
     }
@@ -486,13 +507,13 @@ mod tests {
     #[test]
     fn test_ws_lag_triggers_safe_mode() {
         let mut health = make_health();
-        
+
         health.record_ws_lag(50, 1000); // Below threshold
         assert!(health.state().is_healthy());
-        
+
         health.record_ws_lag(150, 2000); // Above threshold
         assert!(health.state().is_safe_mode());
-        
+
         health.record_ws_lag(50, 3000); // Back below
         health.attempt_recovery(3000);
         assert!(health.state().is_healthy());
@@ -501,11 +522,11 @@ mod tests {
     #[test]
     fn test_parser_errors_trigger_safe_mode() {
         let mut health = make_health();
-        
+
         health.record_parser_error(1000);
         health.record_parser_error(1001);
         assert!(health.state().is_healthy()); // Below threshold (3)
-        
+
         health.record_parser_error(1002);
         assert!(health.state().is_safe_mode()); // At threshold
     }
@@ -513,12 +534,12 @@ mod tests {
     #[test]
     fn test_parser_errors_expire() {
         let mut health = make_health();
-        
+
         health.record_parser_error(1000);
         health.record_parser_error(1001);
         health.record_parser_error(1002);
         assert!(health.state().is_safe_mode());
-        
+
         // After window expires
         health.attempt_recovery(3000); // 2 seconds later, window is 1s
         assert!(health.state().is_healthy());
@@ -528,15 +549,15 @@ mod tests {
     fn test_tick_size_change_triggers_safe_mode() {
         let mut health = make_health();
         let token = TokenId("123".to_string());
-        
+
         // First sync the book
         health.set_book_synced(&token, true, 1000);
         assert!(health.state().is_healthy());
-        
+
         // Tick size change
         health.record_tick_size_change(&token, 100, 10, 2000);
         assert!(health.state().is_safe_mode());
-        
+
         // After resnapshot
         health.clear_tick_size_change(&token, 3000);
         health.set_book_synced(&token, true, 3000);
@@ -547,16 +568,16 @@ mod tests {
     fn test_clock_anomaly() {
         let mut health = make_health();
         let token = TokenId("123".to_string());
-        
+
         // First timestamp
         assert!(health.check_clock(&token, 1000, 1000));
-        
+
         // Normal forward movement
         assert!(health.check_clock(&token, 1500, 1500));
-        
+
         // Small backward (within tolerance)
         assert!(health.check_clock(&token, 1450, 2000));
-        
+
         // Large backward (outside tolerance)
         assert!(!health.check_clock(&token, 1000, 2500));
         assert!(health.state().is_safe_mode());
@@ -566,18 +587,18 @@ mod tests {
     fn test_multiple_reasons_accumulate() {
         let mut health = make_health();
         let token = TokenId("123".to_string());
-        
+
         health.set_book_synced(&token, false, 1000);
         health.record_ws_lag(150, 1000);
-        
+
         assert!(health.state().is_safe_mode());
         assert_eq!(health.safe_mode_reasons().len(), 2);
-        
+
         // Fix one
         health.set_book_synced(&token, true, 2000);
         assert!(health.state().is_safe_mode()); // Still in safe mode
         assert_eq!(health.safe_mode_reasons().len(), 1);
-        
+
         // Fix the other
         health.record_ws_lag(50, 3000);
         health.attempt_recovery(3000);
@@ -587,10 +608,10 @@ mod tests {
     #[test]
     fn test_manual_kill_switch() {
         let mut health = make_health();
-        
+
         health.trigger_kill_switch("Testing".to_string(), 1000);
         assert!(health.state().is_safe_mode());
-        
+
         // Manual kill requires explicit clearing (not automatic recovery)
         health.attempt_recovery(2000);
         assert!(health.state().is_safe_mode());
@@ -599,13 +620,13 @@ mod tests {
     #[test]
     fn test_ws_disconnect() {
         let mut health = make_health();
-        
+
         health.set_ws_connected(true, 1000);
         assert!(health.state().is_healthy());
-        
+
         health.set_ws_connected(false, 2000);
         assert!(health.state().is_safe_mode());
-        
+
         health.set_ws_connected(true, 3000);
         assert!(health.state().is_healthy());
     }

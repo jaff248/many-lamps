@@ -138,23 +138,25 @@ pub enum OrderReason {
 /// Parse price string to tick (strict - returns error on invalid)
 /// "0.55" → Ok(5500), ".48" → Ok(4800)
 pub fn parse_price_to_tick_strict(s: &str, tick_size: Tick) -> Result<Tick, TickParseError> {
-    let f: f64 = s.parse().map_err(|_| TickParseError::InvalidFormat(s.to_string()))?;
-    
+    let f: f64 = s
+        .parse()
+        .map_err(|_| TickParseError::InvalidFormat(s.to_string()))?;
+
     if f < 0.0 || f > 1.0 {
         return Err(TickParseError::OutOfRange(f));
     }
-    
+
     let raw_tick = (f * 10000.0).round() as Tick;
-    
+
     // STRICT: Never snap - if tick is invalid, return error
     if tick_size > 0 && raw_tick % tick_size != 0 {
-        return Err(TickParseError::InvalidTick { 
-            raw_tick, 
+        return Err(TickParseError::InvalidTick {
+            raw_tick,
             tick_size,
             price_str: s.to_string(),
         });
     }
-    
+
     Ok(raw_tick)
 }
 
@@ -173,13 +175,18 @@ pub fn parse_price_to_tick_snap(price: f64, tick_size: Tick) -> Tick {
 /// Convert tick to price string for API/hashing
 pub fn tick_to_price_string(tick: Tick) -> String {
     let price = tick as f64 / 10000.0;
-    format!("{:.4}", price).trim_end_matches('0').trim_end_matches('.').to_string()
+    format!("{:.4}", price)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 /// Parse size string to micro-shares
 /// "30" → 30_000_000, "1.5" → 1_500_000
 pub fn parse_size(s: &str) -> Result<Size, SizeParseError> {
-    let f: f64 = s.parse().map_err(|_| SizeParseError::InvalidFormat(s.to_string()))?;
+    let f: f64 = s
+        .parse()
+        .map_err(|_| SizeParseError::InvalidFormat(s.to_string()))?;
     if f < 0.0 {
         return Err(SizeParseError::Negative(f));
     }

@@ -152,10 +152,13 @@ impl ReplayEngine {
                 | mtrader_core::events::MarketDataEvent::BestBidAsk { timestamps, .. } => {
                     timestamps.ts_process_mono_ns as u64
                 }
-                mtrader_core::events::MarketDataEvent::ConnectionStatus { timestamp_mono_ns, .. }
-                | mtrader_core::events::MarketDataEvent::ParseError { timestamp_mono_ns, .. } => {
-                    *timestamp_mono_ns as u64
+                mtrader_core::events::MarketDataEvent::ConnectionStatus {
+                    timestamp_mono_ns,
+                    ..
                 }
+                | mtrader_core::events::MarketDataEvent::ParseError {
+                    timestamp_mono_ns, ..
+                } => *timestamp_mono_ns as u64,
             },
             CoreEvent::Signal(signal) => signal.timestamp_mono_ns as u64,
             CoreEvent::OrderIntent(intent) => intent.timestamp_mono_ns as u64,
@@ -164,10 +167,16 @@ impl ReplayEngine {
             CoreEvent::CancelAck(cancel) => cancel.timestamp_mono_ns as u64,
             CoreEvent::Risk(_) => 0,
             CoreEvent::System(system) => match system {
-                mtrader_core::events::SystemEvent::SafeMode { timestamp_mono_ns, .. }
+                mtrader_core::events::SystemEvent::SafeMode {
+                    timestamp_mono_ns, ..
+                }
                 | mtrader_core::events::SystemEvent::SafeModeCleared { timestamp_mono_ns }
-                | mtrader_core::events::SystemEvent::ResnaphotRequested { timestamp_mono_ns, .. }
-                | mtrader_core::events::SystemEvent::MarketLifecycle { timestamp_mono_ns, .. }
+                | mtrader_core::events::SystemEvent::ResnaphotRequested {
+                    timestamp_mono_ns, ..
+                }
+                | mtrader_core::events::SystemEvent::MarketLifecycle {
+                    timestamp_mono_ns, ..
+                }
                 | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => {
                     *timestamp_mono_ns as u64
                 }

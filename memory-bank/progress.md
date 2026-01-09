@@ -48,6 +48,10 @@
 - Set starting balance
 - Run simulated backtest
 
+## Phase 6.1 Update: Backtest Execution ✅
+- Backtest now runs against recorded snapshots (no simulated ROI)
+- Errors and empty datasets are surfaced in the UI
+
 ## Phase 7 Complete: Live Trading Parity ✅
 - Same UI as paper trading
 - Wallet address input
@@ -58,6 +62,10 @@
 - **Overall**: 90% complete
 - **Documentation**: 100% (tui-requirements.md complete)
 - **Core Trading**: 90% (TUI integrated, strategy wiring pending)
+
+## QA Status
+- Ran CLI surface tests (status, list, validate-config, backtest, replay).
+- TUI launches in headless mode but still mock-wired; live WS/REST unavailable in this environment.
 
 ## What's Left
 - Wire actual strategy execution to TUI event loop

@@ -21,7 +21,7 @@ fn event_schema() -> Schema {
         Field::new("ts_exchange_ms", DataType::UInt64, false),
         Field::new("ts_recv_mono_ns", DataType::UInt64, false),
         Field::new("ts_process_mono_ns", DataType::UInt64, false),
-        Field::new("side", DataType::UInt8, true),         // 0=Buy, 1=Sell
+        Field::new("side", DataType::UInt8, true), // 0=Buy, 1=Sell
         Field::new("price_tick", DataType::UInt64, true),
         Field::new("size", DataType::Int64, true),
         Field::new("order_id", DataType::Utf8, true),
@@ -127,23 +127,29 @@ impl ParquetEventWriter {
                     asks,
                 } => {
                     self.event_types.push("BookSnapshot".into());
-                    self.ts_exchange_ms.push(timestamps.ts_exchange_ms.max(0) as u64);
-                    self.ts_recv_mono_ns.push(timestamps.ts_recv_mono_ns.max(0) as u64);
-                    self.ts_process_mono_ns.push(timestamps.ts_process_mono_ns.max(0) as u64);
+                    self.ts_exchange_ms
+                        .push(timestamps.ts_exchange_ms.max(0) as u64);
+                    self.ts_recv_mono_ns
+                        .push(timestamps.ts_recv_mono_ns.max(0) as u64);
+                    self.ts_process_mono_ns
+                        .push(timestamps.ts_process_mono_ns.max(0) as u64);
                     self.sides.push(None);
                     self.price_ticks.push(None);
                     self.sizes.push(None);
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "market_id": market_id,
-                        "token_id": token_id,
-                        "tick_size": tick_size,
-                        "snapshot_hash": snapshot_hash,
-                        "bid_levels": bids.len(),
-                        "ask_levels": asks.len(),
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "tick_size": tick_size,
+                            "snapshot_hash": snapshot_hash,
+                            "bid_levels": bids.len(),
+                            "ask_levels": asks.len(),
+                        })
+                        .to_string(),
+                    ));
                 }
                 mtrader_core::events::MarketDataEvent::BookDelta {
                     market_id,
@@ -157,22 +163,28 @@ impl ParquetEventWriter {
                     timestamps,
                 } => {
                     self.event_types.push("BookDelta".into());
-                    self.ts_exchange_ms.push(timestamps.ts_exchange_ms.max(0) as u64);
-                    self.ts_recv_mono_ns.push(timestamps.ts_recv_mono_ns.max(0) as u64);
-                    self.ts_process_mono_ns.push(timestamps.ts_process_mono_ns.max(0) as u64);
+                    self.ts_exchange_ms
+                        .push(timestamps.ts_exchange_ms.max(0) as u64);
+                    self.ts_recv_mono_ns
+                        .push(timestamps.ts_recv_mono_ns.max(0) as u64);
+                    self.ts_process_mono_ns
+                        .push(timestamps.ts_process_mono_ns.max(0) as u64);
                     self.sides.push(Some(*side as u8));
                     self.price_ticks.push(Some(*tick as u64));
                     self.sizes.push(Some(*new_size as i64));
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "market_id": market_id,
-                        "token_id": token_id,
-                        "best_bid": best_bid,
-                        "best_ask": best_ask,
-                        "order_hash": order_hash,
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "best_bid": best_bid,
+                            "best_ask": best_ask,
+                            "order_hash": order_hash,
+                        })
+                        .to_string(),
+                    ));
                 }
                 mtrader_core::events::MarketDataEvent::Trade {
                     market_id,
@@ -184,20 +196,26 @@ impl ParquetEventWriter {
                     timestamps,
                 } => {
                     self.event_types.push("Trade".into());
-                    self.ts_exchange_ms.push(timestamps.ts_exchange_ms.max(0) as u64);
-                    self.ts_recv_mono_ns.push(timestamps.ts_recv_mono_ns.max(0) as u64);
-                    self.ts_process_mono_ns.push(timestamps.ts_process_mono_ns.max(0) as u64);
+                    self.ts_exchange_ms
+                        .push(timestamps.ts_exchange_ms.max(0) as u64);
+                    self.ts_recv_mono_ns
+                        .push(timestamps.ts_recv_mono_ns.max(0) as u64);
+                    self.ts_process_mono_ns
+                        .push(timestamps.ts_process_mono_ns.max(0) as u64);
                     self.sides.push(Some(*side as u8));
                     self.price_ticks.push(Some(*price_tick as u64));
                     self.sizes.push(Some(*size as i64));
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "market_id": market_id,
-                        "token_id": token_id,
-                        "fee_rate_bps": fee_rate_bps,
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "fee_rate_bps": fee_rate_bps,
+                        })
+                        .to_string(),
+                    ));
                 }
                 mtrader_core::events::MarketDataEvent::TickSizeChange {
                     market_id,
@@ -207,21 +225,27 @@ impl ParquetEventWriter {
                     timestamps,
                 } => {
                     self.event_types.push("TickSizeChange".into());
-                    self.ts_exchange_ms.push(timestamps.ts_exchange_ms.max(0) as u64);
-                    self.ts_recv_mono_ns.push(timestamps.ts_recv_mono_ns.max(0) as u64);
-                    self.ts_process_mono_ns.push(timestamps.ts_process_mono_ns.max(0) as u64);
+                    self.ts_exchange_ms
+                        .push(timestamps.ts_exchange_ms.max(0) as u64);
+                    self.ts_recv_mono_ns
+                        .push(timestamps.ts_recv_mono_ns.max(0) as u64);
+                    self.ts_process_mono_ns
+                        .push(timestamps.ts_process_mono_ns.max(0) as u64);
                     self.sides.push(None);
                     self.price_ticks.push(None);
                     self.sizes.push(None);
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "market_id": market_id,
-                        "token_id": token_id,
-                        "old_tick_size": old_tick_size,
-                        "new_tick_size": new_tick_size,
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "old_tick_size": old_tick_size,
+                            "new_tick_size": new_tick_size,
+                        })
+                        .to_string(),
+                    ));
                 }
                 mtrader_core::events::MarketDataEvent::BestBidAsk {
                     market_id,
@@ -232,24 +256,33 @@ impl ParquetEventWriter {
                     timestamps,
                 } => {
                     self.event_types.push("BestBidAsk".into());
-                    self.ts_exchange_ms.push(timestamps.ts_exchange_ms.max(0) as u64);
-                    self.ts_recv_mono_ns.push(timestamps.ts_recv_mono_ns.max(0) as u64);
-                    self.ts_process_mono_ns.push(timestamps.ts_process_mono_ns.max(0) as u64);
+                    self.ts_exchange_ms
+                        .push(timestamps.ts_exchange_ms.max(0) as u64);
+                    self.ts_recv_mono_ns
+                        .push(timestamps.ts_recv_mono_ns.max(0) as u64);
+                    self.ts_process_mono_ns
+                        .push(timestamps.ts_process_mono_ns.max(0) as u64);
                     self.sides.push(None);
                     self.price_ticks.push(None);
                     self.sizes.push(None);
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "market_id": market_id,
-                        "token_id": token_id,
-                        "best_bid": best_bid,
-                        "best_ask": best_ask,
-                        "spread": spread,
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "market_id": market_id,
+                            "token_id": token_id,
+                            "best_bid": best_bid,
+                            "best_ask": best_ask,
+                            "spread": spread,
+                        })
+                        .to_string(),
+                    ));
                 }
-                mtrader_core::events::MarketDataEvent::ConnectionStatus { connected, timestamp_mono_ns } => {
+                mtrader_core::events::MarketDataEvent::ConnectionStatus {
+                    connected,
+                    timestamp_mono_ns,
+                } => {
                     self.event_types.push("ConnectionStatus".into());
                     self.ts_exchange_ms.push(0);
                     self.ts_recv_mono_ns.push(*timestamp_mono_ns as u64);
@@ -260,11 +293,18 @@ impl ParquetEventWriter {
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "connected": connected,
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "connected": connected,
+                        })
+                        .to_string(),
+                    ));
                 }
-                mtrader_core::events::MarketDataEvent::ParseError { error, timestamp_mono_ns, raw_bytes } => {
+                mtrader_core::events::MarketDataEvent::ParseError {
+                    error,
+                    timestamp_mono_ns,
+                    raw_bytes,
+                } => {
                     self.event_types.push("ParseError".into());
                     self.ts_exchange_ms.push(0);
                     self.ts_recv_mono_ns.push(*timestamp_mono_ns as u64);
@@ -275,51 +315,65 @@ impl ParquetEventWriter {
                     self.order_ids.push(None);
                     self.trade_ids.push(None);
                     self.reasons.push(None);
-                    self.payload_jsons.push(Some(serde_json::json!({
-                        "error": error,
-                        "raw_len": raw_bytes.len(),
-                    }).to_string()));
+                    self.payload_jsons.push(Some(
+                        serde_json::json!({
+                            "error": error,
+                            "raw_len": raw_bytes.len(),
+                        })
+                        .to_string(),
+                    ));
                 }
             },
             CoreEvent::Signal(signal) => {
                 self.event_types.push("Signal".into());
-                self.ts_exchange_ms.push((signal.timestamp_mono_ns / 1_000_000) as u64);
+                self.ts_exchange_ms
+                    .push((signal.timestamp_mono_ns / 1_000_000) as u64);
                 self.ts_recv_mono_ns.push(signal.timestamp_mono_ns as u64);
-                self.ts_process_mono_ns.push(signal.timestamp_mono_ns as u64);
+                self.ts_process_mono_ns
+                    .push(signal.timestamp_mono_ns as u64);
                 self.sides.push(None);
                 self.price_ticks.push(None);
                 self.sizes.push(None);
                 self.order_ids.push(None);
                 self.trade_ids.push(None);
                 self.reasons.push(None);
-                self.payload_jsons.push(Some(serde_json::json!({
-                    "strategy_id": signal.strategy_id,
-                    "market_id": signal.market_id,
-                    "token_id": signal.token_id,
-                    "signal_type": signal.signal_type,
-                }).to_string()));
+                self.payload_jsons.push(Some(
+                    serde_json::json!({
+                        "strategy_id": signal.strategy_id,
+                        "market_id": signal.market_id,
+                        "token_id": signal.token_id,
+                        "signal_type": signal.signal_type,
+                    })
+                    .to_string(),
+                ));
             }
             CoreEvent::OrderIntent(intent) => {
                 self.event_types.push("OrderIntent".into());
-                self.ts_exchange_ms.push((intent.timestamp_mono_ns / 1_000_000) as u64);
+                self.ts_exchange_ms
+                    .push((intent.timestamp_mono_ns / 1_000_000) as u64);
                 self.ts_recv_mono_ns.push(intent.timestamp_mono_ns as u64);
-                self.ts_process_mono_ns.push(intent.timestamp_mono_ns as u64);
+                self.ts_process_mono_ns
+                    .push(intent.timestamp_mono_ns as u64);
                 self.sides.push(Some(intent.side as u8));
                 self.price_ticks.push(Some(intent.price_tick as u64));
                 self.sizes.push(Some(intent.size as i64));
                 self.order_ids.push(Some(intent.client_order_id.0.clone()));
                 self.trade_ids.push(None);
                 self.reasons.push(Some(format!("{:?}", intent.reason)));
-                self.payload_jsons.push(Some(serde_json::json!({
-                    "strategy_id": intent.strategy_id,
-                    "market_id": intent.market_id,
-                    "token_id": intent.token_id,
-                    "order_type": intent.order_type,
-                }).to_string()));
+                self.payload_jsons.push(Some(
+                    serde_json::json!({
+                        "strategy_id": intent.strategy_id,
+                        "market_id": intent.market_id,
+                        "token_id": intent.token_id,
+                        "order_type": intent.order_type,
+                    })
+                    .to_string(),
+                ));
             }
             CoreEvent::OrderAck(ack) => {
                 self.event_types.push("OrderAck".into());
-                self.ts_exchange_ms.push((ack.timestamp_mono_ns / 1_000_000) as u64);
+                self.ts_exchange_ms
+                    .push((ack.timestamp_mono_ns / 1_000_000) as u64);
                 self.ts_recv_mono_ns.push(ack.timestamp_mono_ns as u64);
                 self.ts_process_mono_ns.push(ack.timestamp_mono_ns as u64);
                 self.sides.push(None);
@@ -328,36 +382,47 @@ impl ParquetEventWriter {
                 self.order_ids.push(Some(ack.client_order_id.0.clone()));
                 self.trade_ids.push(None);
                 self.reasons.push(Some(format!("{:?}", ack.status)));
-                self.payload_jsons.push(Some(serde_json::json!({
-                    "exchange_order_id": ack.exchange_order_id,
-                }).to_string()));
+                self.payload_jsons.push(Some(
+                    serde_json::json!({
+                        "exchange_order_id": ack.exchange_order_id,
+                    })
+                    .to_string(),
+                ));
             }
             CoreEvent::Fill(fill) => {
                 self.event_types.push("Fill".into());
-                self.ts_exchange_ms.push(fill.timestamps.ts_exchange_ms.max(0) as u64);
-                self.ts_recv_mono_ns.push(fill.timestamps.ts_recv_mono_ns.max(0) as u64);
-                self.ts_process_mono_ns.push(fill.timestamps.ts_process_mono_ns.max(0) as u64);
+                self.ts_exchange_ms
+                    .push(fill.timestamps.ts_exchange_ms.max(0) as u64);
+                self.ts_recv_mono_ns
+                    .push(fill.timestamps.ts_recv_mono_ns.max(0) as u64);
+                self.ts_process_mono_ns
+                    .push(fill.timestamps.ts_process_mono_ns.max(0) as u64);
                 self.sides.push(Some(fill.side as u8));
                 self.price_ticks.push(Some(fill.price_tick as u64));
                 self.sizes.push(Some(fill.fill_size as i64));
                 self.order_ids.push(Some(fill.exchange_order_id.clone()));
                 self.trade_ids.push(Some(fill.exchange_trade_id.clone()));
                 self.reasons.push(None);
-                self.payload_jsons.push(Some(serde_json::json!({
-                    "client_order_id": fill.client_order_id,
-                    "strategy_id": fill.strategy_id,
-                    "market_id": fill.market_id,
-                    "token_id": fill.token_id,
-                    "remaining_size": fill.remaining_size,
-                    "is_maker": fill.is_maker,
-                    "fee_amount": fill.fee_amount,
-                }).to_string()));
+                self.payload_jsons.push(Some(
+                    serde_json::json!({
+                        "client_order_id": fill.client_order_id,
+                        "strategy_id": fill.strategy_id,
+                        "market_id": fill.market_id,
+                        "token_id": fill.token_id,
+                        "remaining_size": fill.remaining_size,
+                        "is_maker": fill.is_maker,
+                        "fee_amount": fill.fee_amount,
+                    })
+                    .to_string(),
+                ));
             }
             CoreEvent::CancelAck(cancel) => {
                 self.event_types.push("CancelAck".into());
-                self.ts_exchange_ms.push((cancel.timestamp_mono_ns / 1_000_000) as u64);
+                self.ts_exchange_ms
+                    .push((cancel.timestamp_mono_ns / 1_000_000) as u64);
                 self.ts_recv_mono_ns.push(cancel.timestamp_mono_ns as u64);
-                self.ts_process_mono_ns.push(cancel.timestamp_mono_ns as u64);
+                self.ts_process_mono_ns
+                    .push(cancel.timestamp_mono_ns as u64);
                 self.sides.push(None);
                 self.price_ticks.push(None);
                 self.sizes.push(None);
@@ -377,16 +442,27 @@ impl ParquetEventWriter {
                 self.order_ids.push(None);
                 self.trade_ids.push(None);
                 self.reasons.push(None);
-                self.payload_jsons.push(Some(serde_json::to_string(risk).unwrap_or_default()));
+                self.payload_jsons
+                    .push(Some(serde_json::to_string(risk).unwrap_or_default()));
             }
             CoreEvent::System(system) => {
                 self.event_types.push("System".into());
                 let timestamp_ns = match system {
-                    mtrader_core::events::SystemEvent::SafeMode { timestamp_mono_ns, .. }
+                    mtrader_core::events::SystemEvent::SafeMode {
+                        timestamp_mono_ns, ..
+                    }
                     | mtrader_core::events::SystemEvent::SafeModeCleared { timestamp_mono_ns }
-                    | mtrader_core::events::SystemEvent::ResnaphotRequested { timestamp_mono_ns, .. }
-                    | mtrader_core::events::SystemEvent::MarketLifecycle { timestamp_mono_ns, .. }
-                    | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => *timestamp_mono_ns,
+                    | mtrader_core::events::SystemEvent::ResnaphotRequested {
+                        timestamp_mono_ns,
+                        ..
+                    }
+                    | mtrader_core::events::SystemEvent::MarketLifecycle {
+                        timestamp_mono_ns,
+                        ..
+                    }
+                    | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => {
+                        *timestamp_mono_ns
+                    }
                 };
                 self.ts_exchange_ms.push((timestamp_ns / 1_000_000) as u64);
                 self.ts_recv_mono_ns.push(timestamp_ns as u64);
@@ -397,7 +473,8 @@ impl ParquetEventWriter {
                 self.order_ids.push(None);
                 self.trade_ids.push(None);
                 self.reasons.push(None);
-                self.payload_jsons.push(Some(serde_json::to_string(system).unwrap_or_default()));
+                self.payload_jsons
+                    .push(Some(serde_json::to_string(system).unwrap_or_default()));
             }
         }
     }

@@ -3,8 +3,8 @@
 //! All events flow through the core loop in strict order.
 //! Events include timing information for latency analysis and replay.
 
-use crate::types::*;
 use crate::health::SafeModeReason;
+use crate::types::*;
 use serde::{Deserialize, Serialize};
 
 /// Timestamps attached to every event
@@ -280,20 +280,11 @@ pub enum RiskEvent {
         limit: i64,
     },
     /// Notional limit reached
-    NotionalLimit {
-        current: u64,
-        limit: u64,
-    },
+    NotionalLimit { current: u64, limit: u64 },
     /// Daily loss limit reached
-    DailyLossLimit {
-        current_pnl: i64,
-        limit: i64,
-    },
+    DailyLossLimit { current_pnl: i64, limit: i64 },
     /// Order rate limit
-    OrderRateLimit {
-        rate: u32,
-        limit: u32,
-    },
+    OrderRateLimit { rate: u32, limit: u32 },
 }
 
 /// System events
@@ -305,9 +296,7 @@ pub enum SystemEvent {
         timestamp_mono_ns: i64,
     },
     /// System recovered from SAFE_MODE
-    SafeModeCleared {
-        timestamp_mono_ns: i64,
-    },
+    SafeModeCleared { timestamp_mono_ns: i64 },
     /// Resnapshot requested
     ResnaphotRequested {
         token_id: TokenId,
@@ -321,9 +310,7 @@ pub enum SystemEvent {
         timestamp_mono_ns: i64,
     },
     /// Heartbeat (for liveness tracking)
-    Heartbeat {
-        timestamp_mono_ns: i64,
-    },
+    Heartbeat { timestamp_mono_ns: i64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,7 +355,7 @@ mod tests {
             ts_recv_mono_ns: 1_000_000_000,
             ts_process_mono_ns: 1_001_000_000,
         };
-        
+
         assert_eq!(ts.ws_lag_ms(1050), 50);
         assert_eq!(ts.processing_latency_ns(), 1_000_000);
     }

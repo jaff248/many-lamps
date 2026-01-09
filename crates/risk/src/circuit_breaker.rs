@@ -53,8 +53,15 @@ pub enum TripReason {
 impl std::fmt::Display for TripReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MaxDrawdownExceeded { current_bps, limit_bps } => {
-                write!(f, "Max drawdown exceeded: {}bps > {}bps", current_bps, limit_bps)
+            Self::MaxDrawdownExceeded {
+                current_bps,
+                limit_bps,
+            } => {
+                write!(
+                    f,
+                    "Max drawdown exceeded: {}bps > {}bps",
+                    current_bps, limit_bps
+                )
             }
             Self::MaxLossExceeded { loss, limit } => {
                 write!(f, "Max loss exceeded: {} > {}", loss, limit)

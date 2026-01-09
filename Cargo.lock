@@ -2817,6 +2817,7 @@ name = "mtrader-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "chrono",
  "clap",
  "many-lamps-book",
@@ -2828,6 +2829,7 @@ dependencies = [
  "mtrader-risk",
  "mtrader-sim",
  "mtrader-strategy",
+ "parquet",
  "serde",
  "serde_json",
  "tempfile",

@@ -75,7 +75,10 @@ impl PaperBook {
     }
 
     /// Remove our order by client order ID.
-    pub fn remove_order_by_client_id(&mut self, client_order_id: &ClientOrderId) -> Option<PaperOrder> {
+    pub fn remove_order_by_client_id(
+        &mut self,
+        client_order_id: &ClientOrderId,
+    ) -> Option<PaperOrder> {
         for orders in self.our_bids.values_mut().chain(self.our_asks.values_mut()) {
             if let Some(idx) = orders
                 .iter()

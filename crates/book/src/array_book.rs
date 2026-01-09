@@ -175,7 +175,7 @@ impl ArrayBook {
     pub fn depth_at_levels(&self, side: Side, levels: usize) -> Size {
         let mut depth = 0;
         let mut count = 0;
-        
+
         match side {
             Side::Buy => {
                 let mut tick_opt = self.best_bid;
@@ -200,7 +200,7 @@ impl ArrayBook {
                 }
             }
         }
-        
+
         depth
     }
 
@@ -284,7 +284,11 @@ impl ArrayBook {
             // No tick size restriction - every tick is valid
             for i in 0..BOOK_ARRAY_SIZE {
                 self.prev_valid[i] = if i > 0 { Some((i - 1) as Tick) } else { None };
-                self.next_valid[i] = if i < MAX_TICK as usize { Some((i + 1) as Tick) } else { None };
+                self.next_valid[i] = if i < MAX_TICK as usize {
+                    Some((i + 1) as Tick)
+                } else {
+                    None
+                };
             }
             return;
         }
@@ -391,19 +395,19 @@ mod tests {
     #[test]
     fn test_set_level_updates_best() {
         let mut book = ArrayBook::new(100);
-        
+
         // Add bid
         book.set_level(Side::Buy, 5000, 100).unwrap();
         assert_eq!(book.best_bid(), Some(5000));
-        
+
         // Add higher bid
         book.set_level(Side::Buy, 5100, 200).unwrap();
         assert_eq!(book.best_bid(), Some(5100));
-        
+
         // Add ask
         book.set_level(Side::Sell, 5200, 300).unwrap();
         assert_eq!(book.best_ask(), Some(5200));
-        
+
         // Add lower ask
         book.set_level(Side::Sell, 5100, 400).unwrap();
         assert_eq!(book.best_ask(), Some(5100));
@@ -412,15 +416,15 @@ mod tests {
     #[test]
     fn test_remove_best_updates() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 5000, 100).unwrap();
         book.set_level(Side::Buy, 5100, 200).unwrap();
         assert_eq!(book.best_bid(), Some(5100));
-        
+
         // Remove best bid
         book.set_level(Side::Buy, 5100, 0).unwrap();
         assert_eq!(book.best_bid(), Some(5000));
-        
+
         // Remove remaining bid
         book.set_level(Side::Buy, 5000, 0).unwrap();
         assert_eq!(book.best_bid(), None);
@@ -429,13 +433,13 @@ mod tests {
     #[test]
     fn test_tick_validation() {
         let book = ArrayBook::new(100); // tick_size = 0.01
-        
+
         // Valid ticks (divisible by 100)
         assert!(book.is_valid_tick(0));
         assert!(book.is_valid_tick(100));
         assert!(book.is_valid_tick(5000));
         assert!(book.is_valid_tick(10000));
-        
+
         // Invalid ticks
         assert!(!book.is_valid_tick(50));
         assert!(!book.is_valid_tick(5050));
@@ -445,10 +449,10 @@ mod tests {
     #[test]
     fn test_validate_inbound_tick_error() {
         let book = ArrayBook::new(100);
-        
+
         // Valid tick should succeed
         assert!(book.validate_inbound_tick(5000, "0.50").is_ok());
-        
+
         // Invalid tick should fail
         let result = book.validate_inbound_tick(5050, "0.505");
         assert!(matches!(result, Err(BookError::InvalidTickObserved { .. })));
@@ -457,24 +461,24 @@ mod tests {
     #[test]
     fn test_spread() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 4900, 100).unwrap();
         book.set_level(Side::Sell, 5100, 100).unwrap();
-        
+
         assert_eq!(book.spread(), Some(200)); // 0.02 spread
     }
 
     #[test]
     fn test_microprice() {
         let mut book = ArrayBook::new(100);
-        
+
         // Equal sizes -> mid price
         book.set_level(Side::Buy, 4900, 1_000_000).unwrap();
         book.set_level(Side::Sell, 5100, 1_000_000).unwrap();
-        
+
         let mp = book.microprice().unwrap();
         assert!((mp - 0.50).abs() < 0.0001);
-        
+
         // Weighted toward bid (larger ask size)
         book.set_level(Side::Sell, 5100, 3_000_000).unwrap();
         let mp2 = book.microprice().unwrap();
@@ -484,11 +488,11 @@ mod tests {
     #[test]
     fn test_depth_at_levels() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 5000, 100).unwrap();
         book.set_level(Side::Buy, 4900, 200).unwrap();
         book.set_level(Side::Buy, 4800, 300).unwrap();
-        
+
         assert_eq!(book.depth_at_levels(Side::Buy, 1), 100);
         assert_eq!(book.depth_at_levels(Side::Buy, 2), 300);
         assert_eq!(book.depth_at_levels(Side::Buy, 3), 600);
@@ -498,12 +502,12 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 5000, 100).unwrap();
         book.set_level(Side::Sell, 5100, 200).unwrap();
-        
+
         book.clear();
-        
+
         assert_eq!(book.best_bid(), None);
         assert_eq!(book.best_ask(), None);
         assert_eq!(book.get_level(Side::Buy, 5000), 0);
@@ -512,10 +516,10 @@ mod tests {
     #[test]
     fn test_tick_size_change() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 5000, 100).unwrap();
         assert_eq!(book.best_bid(), Some(5000));
-        
+
         // Change tick size - should clear book
         book.set_tick_size(10);
         assert_eq!(book.best_bid(), None);
@@ -526,11 +530,11 @@ mod tests {
     #[test]
     fn test_bids_vec_sorted() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Buy, 4800, 100).unwrap();
         book.set_level(Side::Buy, 5000, 200).unwrap();
         book.set_level(Side::Buy, 4900, 300).unwrap();
-        
+
         let bids = book.bids_vec();
         assert_eq!(bids.len(), 3);
         assert_eq!(bids[0], (5000, 200)); // Best first
@@ -541,11 +545,11 @@ mod tests {
     #[test]
     fn test_asks_vec_sorted() {
         let mut book = ArrayBook::new(100);
-        
+
         book.set_level(Side::Sell, 5200, 100).unwrap();
         book.set_level(Side::Sell, 5000, 200).unwrap();
         book.set_level(Side::Sell, 5100, 300).unwrap();
-        
+
         let asks = book.asks_vec();
         assert_eq!(asks.len(), 3);
         assert_eq!(asks[0], (5000, 200)); // Best first
@@ -577,13 +581,13 @@ mod proptests {
             )
         ) {
             let mut book = ArrayBook::new(100);
-            
+
             for (is_bid, tick_factor, size) in updates {
                 let tick = tick_factor * 100; // Ensure valid tick
                 let side = if is_bid { Side::Buy } else { Side::Sell };
                 book.set_level(side, tick, size).unwrap();
             }
-            
+
             // Verify all non-zero levels are on valid ticks
             for tick in 0..=MAX_TICK {
                 if book.bids[tick as usize] > 0 {
@@ -593,7 +597,7 @@ mod proptests {
                     prop_assert!(book.is_valid_tick(tick), "Invalid ask tick: {}", tick);
                 }
             }
-            
+
             // Verify best bid/ask are valid ticks
             if let Some(bb) = book.best_bid() {
                 prop_assert!(book.is_valid_tick(bb), "Invalid best bid tick: {}", bb);
@@ -609,7 +613,7 @@ mod proptests {
         ) {
             let mut book = ArrayBook::new(100);
             let mut max_tick = 0;
-            
+
             for (tick_factor, size) in bids {
                 let tick = tick_factor * 100;
                 book.set_level(Side::Buy, tick, size).unwrap();
@@ -617,7 +621,7 @@ mod proptests {
                     max_tick = tick;
                 }
             }
-            
+
             prop_assert_eq!(book.best_bid(), Some(max_tick));
         }
 
@@ -627,7 +631,7 @@ mod proptests {
         ) {
             let mut book = ArrayBook::new(100);
             let mut min_tick = MAX_TICK;
-            
+
             for (tick_factor, size) in asks {
                 let tick = tick_factor * 100;
                 book.set_level(Side::Sell, tick, size).unwrap();
@@ -635,7 +639,7 @@ mod proptests {
                     min_tick = tick;
                 }
             }
-            
+
             prop_assert_eq!(book.best_ask(), Some(min_tick));
         }
     }

@@ -5,6 +5,16 @@
 - **Auto-Trading Mode**: Implement strategy-driven autonomous trading
 - **Risk Integration**: Wire existing risk crate into TUI
 
+## Latest Updates
+- Replaced simulated backtest results with snapshot-driven backtest execution.
+- Expanded risk settings to include portfolio exposure and daily trade limits.
+- Fixed parameter adjustment bounds in strategy and risk settings.
+
+## QA Review Notes
+- Ran CLI command coverage (status, list, validate, backtest, replay, TUI) and live-data attempts.
+- Live WS/REST calls failed in this environment (network unreachable).
+- Identified remaining gaps: TUI still uses mock connection/recording, replay loader stub, and status/list outputs are placeholders.
+
 ## Recent Changes
 - Created comprehensive `tui-requirements.md` with all feature specifications
 - Identified bugs: input editing, random position display, manual trade button
@@ -52,4 +62,3 @@ See `tui-requirements.md` appendix for complete file list.
 - Codebase already has robust `PositionLimits` and `CircuitBreaker` in risk crate
 - Strategy trait exists with `on_update()` → `Vec<StrategyAction>` pattern
 - Need to wire TUI to actual trading loop, not just mock display
-

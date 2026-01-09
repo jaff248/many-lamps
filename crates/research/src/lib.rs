@@ -73,7 +73,7 @@ pub struct PositionConversionEvent {
     pub transaction_hash: String,
     pub timestamp: DateTime<Utc>,
     pub user: String,
-    pub index_set: String,  // Bitmask of NO tokens converted
+    pub index_set: String, // Bitmask of NO tokens converted
     pub amount: String,
     pub market_slug: Option<String>,
 }
@@ -87,7 +87,7 @@ pub struct MarketSentiment {
     pub spread: f64,
     pub volume_24h: f64,
     pub last_trade_time: Option<DateTime<Utc>>,
-    pub trader_concentration: f64,  // Herfindahl index (0-1)
+    pub trader_concentration: f64, // Herfindahl index (0-1)
     pub active_traders: usize,
 }
 
@@ -95,7 +95,7 @@ pub struct MarketSentiment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArbitrageOpportunity {
     pub market_slug: String,
-    pub conversion_type: String,  // "NO_TO_YES"
+    pub conversion_type: String, // "NO_TO_YES"
     pub estimated_profit_bps: f64,
     pub requires_collateral_release: bool,
     pub min_size: f64,
@@ -114,7 +114,8 @@ pub async fn fetch_active_markets() -> Result<Vec<Market>, Box<dyn Error>> {
     let client = Client::new();
     let url = format!("{}/markets?active=true", POLYMARKET_CLOB_URL);
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .header("User-Agent", "mtrader-research/0.1")
         .send()
         .await?
@@ -136,7 +137,8 @@ pub async fn fetch_market_by_slug(slug: &str) -> Result<Option<Market>, Box<dyn 
     let client = Client::new();
     let url = format!("{}/markets?slug={}", POLYMARKET_CLOB_URL, slug);
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .header("User-Agent", "mtrader-research/0.1")
         .send()
         .await?
@@ -157,30 +159,36 @@ pub async fn analyze_market_sentiment(
     market: &Market,
     recent_trades: &[TradeEvent],
 ) -> MarketSentiment {
-    let yes_token = market.tokens.iter()
+    let yes_token = market
+        .tokens
+        .iter()
         .find(|t| t.outcome.to_lowercase() == "yes")
         .map(|t| t.price)
         .unwrap_or(0.5);
 
-    let no_token = market.tokens.iter()
+    let no_token = market
+        .tokens
+        .iter()
         .find(|t| t.outcome.to_lowercase() == "no")
         .map(|t| t.price)
         .unwrap_or(0.5);
 
     // Calculate trader concentration (Herfindahl index)
-    let trader_volumes: std::collections::HashMap<String, f64> = recent_trades
-        .iter()
-        .fold(std::collections::HashMap::new(), |mut acc, trade| {
-            let vol = trade.maker_amount_filled.parse::<f64>().unwrap_or(0.0)
-                + trade.taker_amount_filled.parse::<f64>().unwrap_or(0.0);
-            *acc.entry(trade.maker.clone()).or_insert(0.0) += vol / 2.0;
-            *acc.entry(trade.taker.clone()).or_insert(0.0) += vol / 2.0;
-            acc
-        });
+    let trader_volumes: std::collections::HashMap<String, f64> =
+        recent_trades
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, trade| {
+                let vol = trade.maker_amount_filled.parse::<f64>().unwrap_or(0.0)
+                    + trade.taker_amount_filled.parse::<f64>().unwrap_or(0.0);
+                *acc.entry(trade.maker.clone()).or_insert(0.0) += vol / 2.0;
+                *acc.entry(trade.taker.clone()).or_insert(0.0) += vol / 2.0;
+                acc
+            });
 
     let total_volume: f64 = trader_volumes.values().sum();
     let hhi: f64 = if total_volume > 0.0 {
-        trader_volumes.values()
+        trader_volumes
+            .values()
             .map(|v| (v / total_volume).powi(2))
             .sum()
     } else {
@@ -204,16 +212,20 @@ pub fn identify_no_to_yes_arbitrage(market: &Market) -> Option<ArbitrageOpportun
     // In multi-outcome markets, holding NO tokens for all but one outcome
     // can be converted to YES for the remaining outcome + USDC collateral
     if market.tokens.len() < 3 {
-        return None;  // Not a multi-outcome market
+        return None; // Not a multi-outcome market
     }
 
     // Calculate potential arbitrage
-    let yes_price = market.tokens.iter()
+    let yes_price = market
+        .tokens
+        .iter()
         .find(|t| t.outcome.to_lowercase() == "yes")
         .map(|t| t.price)
         .unwrap_or(0.5);
 
-    let no_prices: Vec<f64> = market.tokens.iter()
+    let no_prices: Vec<f64> = market
+        .tokens
+        .iter()
         .filter(|t| t.outcome.to_lowercase() == "no")
         .map(|t| t.price)
         .collect();
@@ -226,14 +238,19 @@ pub fn identify_no_to_yes_arbitrage(market: &Market) -> Option<ArbitrageOpportun
     let no_sum: f64 = no_prices.iter().sum();
     let spread_bps = ((1.0 - yes_price) - no_sum) * 10000.0;
 
-    if spread_bps > 10.0 {  // > 0.1% spread
+    if spread_bps > 10.0 {
+        // > 0.1% spread
         Some(ArbitrageOpportunity {
             market_slug: market.market_slug.clone(),
             conversion_type: "NO_TO_YES".to_string(),
             estimated_profit_bps: spread_bps,
             requires_collateral_release: true,
             min_size: market.minimum_order_size.parse().unwrap_or(15.0),
-            risk_level: if spread_bps > 50.0 { RiskLevel::Low } else { RiskLevel::Medium },
+            risk_level: if spread_bps > 50.0 {
+                RiskLevel::Low
+            } else {
+                RiskLevel::Medium
+            },
         })
     } else {
         None
@@ -252,11 +269,11 @@ pub struct MarketResearch {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StrategyRecommendation {
-    MakerMM,           // Provide liquidity, collect spreads
-    Taker,             // Take positions on direction
-    Arbitrage,         // Exploit conversion opportunities
-    Avoid,             // Fees or conditions unfavorable
-    Observe,           // Not enough data yet
+    MakerMM,   // Provide liquidity, collect spreads
+    Taker,     // Take positions on direction
+    Arbitrage, // Exploit conversion opportunities
+    Avoid,     // Fees or conditions unfavorable
+    Observe,   // Not enough data yet
 }
 
 /// Research a single market
@@ -265,14 +282,20 @@ pub async fn research_market(slug: &str) -> Result<MarketResearch, Box<dyn Error
         .await?
         .ok_or("Market not found")?;
 
-    let sentiment = analyze_market_sentiment(&market, &[]).await;  // No trades yet
+    let sentiment = analyze_market_sentiment(&market, &[]).await; // No trades yet
     let arbitrage = identify_no_to_yes_arbitrage(&market);
 
     let mut notes: Vec<String> = Vec::new();
     let mut recommendation = StrategyRecommendation::Observe;
 
     // Fee analysis
-    if market.fee_rate_bps.as_ref().map(|s| s.parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0) > 0.0 {
+    if market
+        .fee_rate_bps
+        .as_ref()
+        .map(|s| s.parse::<f64>().unwrap_or(0.0))
+        .unwrap_or(0.0)
+        > 0.0
+    {
         notes.push("Market has trading fees - consider impact on strategy".to_string());
     }
 
@@ -280,10 +303,16 @@ pub async fn research_market(slug: &str) -> Result<MarketResearch, Box<dyn Error
     let spread = (market.tokens[0].price - market.tokens[1].price).abs();
     if let Some(arb) = &arbitrage {
         recommendation = StrategyRecommendation::Arbitrage;
-        notes.push(format!("Arbitrage opportunity: ~{:.1} bps profit", arb.estimated_profit_bps));
+        notes.push(format!(
+            "Arbitrage opportunity: ~{:.1} bps profit",
+            arb.estimated_profit_bps
+        ));
     } else if spread > 0.1 {
         recommendation = StrategyRecommendation::MakerMM;
-        notes.push(format!("Wide spread {:.1}% - good for market making", spread * 100.0));
+        notes.push(format!(
+            "Wide spread {:.1}% - good for market making",
+            spread * 100.0
+        ));
     } else if spread < 0.02 {
         recommendation = StrategyRecommendation::Taker;
         notes.push("Tight spread - consider directional bets".to_string());
@@ -358,9 +387,24 @@ mod tests {
             active: true,
             closed: false,
             tokens: vec![
-                MarketToken { token_id: "1".to_string(), outcome: "Yes".to_string(), price: 0.6, winner: false },
-                MarketToken { token_id: "2".to_string(), outcome: "No".to_string(), price: 0.4, winner: false },
-                MarketToken { token_id: "3".to_string(), outcome: "Maybe".to_string(), price: 0.3, winner: false },
+                MarketToken {
+                    token_id: "1".to_string(),
+                    outcome: "Yes".to_string(),
+                    price: 0.6,
+                    winner: false,
+                },
+                MarketToken {
+                    token_id: "2".to_string(),
+                    outcome: "No".to_string(),
+                    price: 0.4,
+                    winner: false,
+                },
+                MarketToken {
+                    token_id: "3".to_string(),
+                    outcome: "Maybe".to_string(),
+                    price: 0.3,
+                    winner: false,
+                },
             ],
             minimum_order_size: "15".to_string(),
             minimum_tick_size: "0.01".to_string(),

@@ -2,25 +2,34 @@
 
 use crate::config::Config;
 use anyhow::Result;
+use arrow::array::{Array, Int64Array, StringArray, UInt64Array, UInt8Array};
+use arrow::record_batch::RecordBatch;
 use mtrader_book::ArrayBook;
-use mtrader_core::events::{CoreEvent, MarketDataEvent};
+use mtrader_core::events::{
+    CancelAck, CancelAckStatus, CoreEvent, EventTimestamps, FillEvent, MarketDataEvent, OrderAck,
+    OrderAckStatus, OrderIntent, OrderType as CoreOrderType, RiskEvent, SignalType, StrategySignal,
+    SystemEvent,
+};
 use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
-use mtrader_core::Side;
-use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
+use mtrader_core::{ClientOrderId, MarketId, OrderReason, Side, StrategyId, TokenId};
 use mtrader_execution::state_manager::OrderManagerConfig;
+use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
 use mtrader_risk::{PnLSnapshot, Position};
-use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, ReplayEngine};
 use mtrader_sim::fill_sim::SimEvent;
 use mtrader_sim::paper_book::PaperOrder;
 use mtrader_sim::replay::{ReplayMode, ReplayStats};
+use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook, ReplayEngine};
+use mtrader_strategy::bundle_maker::BundleMakerConfig;
+use mtrader_strategy::maker_mm::MakerMMConfig;
+use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
 use mtrader_strategy::{
     BundleMakerStrategy, MakerMMStrategy, Strategy, StrategyAction, StrategyContext,
     UnaffectedArbStrategy, WorkingOrder,
 };
-use mtrader_strategy::bundle_maker::BundleMakerConfig;
-use mtrader_strategy::maker_mm::MakerMMConfig;
-use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use serde_json::Value;
 use std::collections::VecDeque;
+use std::fs::File;
 use std::path::Path;
 use tracing::{error, info, warn};
 
@@ -46,8 +55,402 @@ impl BacktestReport {
 
 /// Load events from Parquet file.
 fn load_events_from_parquet(_path: &Path) -> Result<Vec<CoreEvent>> {
-    warn!("Parquet reading not yet fully implemented");
-    Ok(Vec::new())
+    let file = File::open(_path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let reader = builder.build()?;
+    let mut events = Vec::new();
+
+    for batch_result in reader {
+        let batch = batch_result?;
+        let columns = ParquetColumns::from_batch(&batch)?;
+        for row in 0..batch.num_rows() {
+            if let Some(event) = parse_event_row(&columns, row)? {
+                events.push(event);
+            }
+        }
+    }
+
+    Ok(events)
+}
+
+struct ParquetColumns {
+    event_type: StringArray,
+    ts_exchange_ms: UInt64Array,
+    ts_recv_mono_ns: UInt64Array,
+    ts_process_mono_ns: UInt64Array,
+    side: UInt8Array,
+    price_tick: UInt64Array,
+    size: Int64Array,
+    order_id: StringArray,
+    trade_id: StringArray,
+    reason: StringArray,
+    payload_json: StringArray,
+}
+
+impl ParquetColumns {
+    fn from_batch(batch: &RecordBatch) -> Result<Self> {
+        Ok(Self {
+            event_type: column_as(batch, "event_type")?,
+            ts_exchange_ms: column_as(batch, "ts_exchange_ms")?,
+            ts_recv_mono_ns: column_as(batch, "ts_recv_mono_ns")?,
+            ts_process_mono_ns: column_as(batch, "ts_process_mono_ns")?,
+            side: column_as(batch, "side")?,
+            price_tick: column_as(batch, "price_tick")?,
+            size: column_as(batch, "size")?,
+            order_id: column_as(batch, "order_id")?,
+            trade_id: column_as(batch, "trade_id")?,
+            reason: column_as(batch, "reason")?,
+            payload_json: column_as(batch, "payload_json")?,
+        })
+    }
+}
+
+fn column_as<T: 'static>(batch: &RecordBatch, name: &str) -> Result<T>
+where
+    T: arrow::array::Array + Clone,
+{
+    let array = batch
+        .column_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("Missing Parquet column: {}", name))?
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| anyhow::anyhow!("Unexpected type for Parquet column: {}", name))?;
+    Ok(array.clone())
+}
+
+fn parse_event_row(columns: &ParquetColumns, row: usize) -> Result<Option<CoreEvent>> {
+    let event_type = columns.event_type.value(row);
+    let timestamps = EventTimestamps {
+        ts_exchange_ms: columns.ts_exchange_ms.value(row) as i64,
+        ts_recv_mono_ns: columns.ts_recv_mono_ns.value(row) as i64,
+        ts_process_mono_ns: columns.ts_process_mono_ns.value(row) as i64,
+    };
+    let payload = parse_payload(&columns.payload_json, row)?;
+
+    let event = match event_type {
+        "BookSnapshot" => {
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let tick_size = payload_u64(&payload, "tick_size").unwrap_or_default() as u16;
+            let snapshot_hash = payload_string(&payload, "snapshot_hash").unwrap_or_default();
+            Some(CoreEvent::MarketData(MarketDataEvent::BookSnapshot {
+                market_id,
+                token_id,
+                bids: Vec::new(),
+                asks: Vec::new(),
+                tick_size,
+                snapshot_hash,
+                timestamps,
+            }))
+        }
+        "BookDelta" => {
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let side = parse_side(&columns.side, row).unwrap_or(Side::Buy);
+            let tick = columns.price_tick.value(row) as u16;
+            let new_size = columns.size.value(row) as u64;
+            let best_bid = payload_u64(&payload, "best_bid").map(|v| v as u16);
+            let best_ask = payload_u64(&payload, "best_ask").map(|v| v as u16);
+            let order_hash = payload_string(&payload, "order_hash").unwrap_or_default();
+            Some(CoreEvent::MarketData(MarketDataEvent::BookDelta {
+                market_id,
+                token_id,
+                side,
+                tick,
+                new_size,
+                best_bid,
+                best_ask,
+                order_hash,
+                timestamps,
+            }))
+        }
+        "Trade" => {
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let side = parse_side(&columns.side, row).unwrap_or(Side::Buy);
+            let price_tick = columns.price_tick.value(row) as u16;
+            let size = columns.size.value(row) as u64;
+            let fee_rate_bps = payload_u64(&payload, "fee_rate_bps").unwrap_or(0) as u16;
+            Some(CoreEvent::MarketData(MarketDataEvent::Trade {
+                market_id,
+                token_id,
+                side,
+                price_tick,
+                size,
+                fee_rate_bps,
+                timestamps,
+            }))
+        }
+        "TickSizeChange" => {
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let old_tick_size = payload_u64(&payload, "old_tick_size").unwrap_or(0) as u16;
+            let new_tick_size = payload_u64(&payload, "new_tick_size").unwrap_or(0) as u16;
+            Some(CoreEvent::MarketData(MarketDataEvent::TickSizeChange {
+                market_id,
+                token_id,
+                old_tick_size,
+                new_tick_size,
+                timestamps,
+            }))
+        }
+        "BestBidAsk" => {
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let best_bid = payload_u64(&payload, "best_bid").map(|v| v as u16);
+            let best_ask = payload_u64(&payload, "best_ask").map(|v| v as u16);
+            let spread = payload_u64(&payload, "spread").map(|v| v as u16);
+            Some(CoreEvent::MarketData(MarketDataEvent::BestBidAsk {
+                market_id,
+                token_id,
+                best_bid,
+                best_ask,
+                spread,
+                timestamps,
+            }))
+        }
+        "ConnectionStatus" => Some(CoreEvent::MarketData(MarketDataEvent::ConnectionStatus {
+            connected: payload_bool(&payload, "connected").unwrap_or(false),
+            timestamp_mono_ns: timestamps.ts_recv_mono_ns,
+        })),
+        "ParseError" => Some(CoreEvent::MarketData(MarketDataEvent::ParseError {
+            raw_bytes: Vec::new(),
+            error: payload_string(&payload, "error").unwrap_or_default(),
+            timestamp_mono_ns: timestamps.ts_recv_mono_ns,
+        })),
+        "Signal" => {
+            let strategy_id =
+                StrategyId(payload_string(&payload, "strategy_id").unwrap_or_default());
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let signal_type = payload
+                .as_ref()
+                .and_then(|value| value.get("signal_type"))
+                .and_then(|v| serde_json::from_value::<SignalType>(v.clone()).ok())
+                .unwrap_or(SignalType::Resume);
+            Some(CoreEvent::Signal(StrategySignal {
+                strategy_id,
+                market_id,
+                token_id,
+                signal_type,
+                timestamp_mono_ns: timestamps.ts_process_mono_ns,
+            }))
+        }
+        "OrderIntent" => {
+            let strategy_id =
+                StrategyId(payload_string(&payload, "strategy_id").unwrap_or_default());
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let order_type = payload
+                .as_ref()
+                .and_then(|value| value.get("order_type"))
+                .and_then(|v| serde_json::from_value::<CoreOrderType>(v.clone()).ok())
+                .unwrap_or(CoreOrderType::Gtc);
+            let reason = reason_value(&columns.reason, row)
+                .as_deref()
+                .map(parse_order_reason)
+                .unwrap_or(OrderReason::Manual);
+            let client_order_id =
+                ClientOrderId(reason_value(&columns.order_id, row).unwrap_or_default());
+            Some(CoreEvent::OrderIntent(OrderIntent {
+                client_order_id,
+                strategy_id,
+                market_id,
+                token_id,
+                side: parse_side(&columns.side, row).unwrap_or(Side::Buy),
+                price_tick: columns.price_tick.value(row) as u16,
+                size: columns.size.value(row) as u64,
+                order_type,
+                reason,
+                timestamp_mono_ns: timestamps.ts_process_mono_ns,
+            }))
+        }
+        "OrderAck" => {
+            let client_order_id =
+                ClientOrderId(reason_value(&columns.order_id, row).unwrap_or_default());
+            let exchange_order_id = payload_string(&payload, "exchange_order_id");
+            let status = reason_value(&columns.reason, row)
+                .as_deref()
+                .map(parse_order_ack_status)
+                .unwrap_or(OrderAckStatus::Accepted);
+            Some(CoreEvent::OrderAck(OrderAck {
+                client_order_id,
+                exchange_order_id,
+                status,
+                timestamp_mono_ns: timestamps.ts_process_mono_ns,
+            }))
+        }
+        "Fill" => {
+            let client_order_id =
+                ClientOrderId(payload_string(&payload, "client_order_id").unwrap_or_default());
+            let exchange_order_id = reason_value(&columns.order_id, row).unwrap_or_default();
+            let exchange_trade_id = reason_value(&columns.trade_id, row).unwrap_or_default();
+            let strategy_id =
+                StrategyId(payload_string(&payload, "strategy_id").unwrap_or_default());
+            let market_id = MarketId(payload_string(&payload, "market_id").unwrap_or_default());
+            let token_id = TokenId(payload_string(&payload, "token_id").unwrap_or_default());
+            let remaining_size = payload_u64(&payload, "remaining_size").unwrap_or(0);
+            let is_maker = payload_bool(&payload, "is_maker").unwrap_or(false);
+            let fee_amount = payload_u64(&payload, "fee_amount").unwrap_or(0);
+            Some(CoreEvent::Fill(FillEvent {
+                client_order_id,
+                exchange_order_id,
+                exchange_trade_id,
+                strategy_id,
+                market_id,
+                token_id,
+                side: parse_side(&columns.side, row).unwrap_or(Side::Buy),
+                price_tick: columns.price_tick.value(row) as u16,
+                fill_size: columns.size.value(row) as u64,
+                remaining_size,
+                is_maker,
+                fee_amount,
+                timestamps,
+            }))
+        }
+        "CancelAck" => {
+            let client_order_id =
+                ClientOrderId(reason_value(&columns.order_id, row).unwrap_or_default());
+            let status = reason_value(&columns.reason, row)
+                .as_deref()
+                .map(parse_cancel_status)
+                .unwrap_or(CancelAckStatus::Cancelled);
+            Some(CoreEvent::CancelAck(CancelAck {
+                client_order_id,
+                status,
+                timestamp_mono_ns: timestamps.ts_process_mono_ns,
+            }))
+        }
+        "Risk" => payload
+            .and_then(|value| serde_json::from_value::<RiskEvent>(value).ok())
+            .map(CoreEvent::Risk),
+        "System" => payload
+            .and_then(|value| serde_json::from_value::<SystemEvent>(value).ok())
+            .map(CoreEvent::System),
+        _ => None,
+    };
+
+    Ok(event)
+}
+
+fn parse_payload(payloads: &StringArray, row: usize) -> Result<Option<Value>> {
+    if payloads.is_null(row) {
+        return Ok(None);
+    }
+    let raw = payloads.value(row);
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(raw)?))
+}
+
+fn payload_string(payload: &Option<Value>, key: &str) -> Option<String> {
+    payload
+        .as_ref()
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn payload_u64(payload: &Option<Value>, key: &str) -> Option<u64> {
+    payload
+        .as_ref()
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v as u64)))
+}
+
+fn payload_bool(payload: &Option<Value>, key: &str) -> Option<bool> {
+    payload
+        .as_ref()
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_bool())
+}
+
+fn reason_value(array: &StringArray, row: usize) -> Option<String> {
+    if array.is_null(row) {
+        None
+    } else {
+        Some(array.value(row).to_string())
+    }
+}
+
+fn parse_side(array: &UInt8Array, row: usize) -> Option<Side> {
+    if array.is_null(row) {
+        None
+    } else {
+        match array.value(row) {
+            0 => Some(Side::Buy),
+            1 => Some(Side::Sell),
+            _ => None,
+        }
+    }
+}
+
+fn parse_order_reason(raw: &str) -> OrderReason {
+    match raw {
+        "QuoteRefresh" => OrderReason::QuoteRefresh,
+        "MakerQuote" => OrderReason::MakerQuote,
+        "TickMove" => OrderReason::TickMove,
+        "InventorySkew" => OrderReason::InventorySkew,
+        "VolGate" => OrderReason::VolGate,
+        "WindDown" => OrderReason::WindDown,
+        "Resync" => OrderReason::Resync,
+        "Reconcile" => OrderReason::Reconcile,
+        "SelfTradeAvoid" => OrderReason::SelfTradeAvoid,
+        "RiskKill" => OrderReason::RiskKill,
+        "Manual" => OrderReason::Manual,
+        "PostFill" => OrderReason::PostFill,
+        "Signal" => OrderReason::Signal,
+        "BundleArb" => OrderReason::BundleArb,
+        "SafeMode" => OrderReason::SafeMode,
+        "Timeout" => OrderReason::Timeout,
+        _ => OrderReason::Manual,
+    }
+}
+
+fn parse_order_ack_status(raw: &str) -> OrderAckStatus {
+    if raw.starts_with("Rejected") {
+        return OrderAckStatus::Rejected {
+            reason: raw.to_string(),
+        };
+    }
+    if raw.starts_with("Matched") {
+        let fill_size = parse_number_field(raw, "fill_size").unwrap_or(0);
+        let fill_price = parse_number_field(raw, "fill_price").unwrap_or(0);
+        return OrderAckStatus::Matched {
+            fill_size,
+            fill_price: fill_price as u16,
+        };
+    }
+    match raw {
+        "Accepted" => OrderAckStatus::Accepted,
+        "Timeout" => OrderAckStatus::Timeout,
+        _ => OrderAckStatus::Accepted,
+    }
+}
+
+fn parse_cancel_status(raw: &str) -> CancelAckStatus {
+    if raw.starts_with("Rejected") {
+        return CancelAckStatus::Rejected {
+            reason: raw.to_string(),
+        };
+    }
+    match raw {
+        "Cancelled" => CancelAckStatus::Cancelled,
+        "NotFound" => CancelAckStatus::NotFound,
+        "Timeout" => CancelAckStatus::Timeout,
+        _ => CancelAckStatus::Cancelled,
+    }
+}
+
+fn parse_number_field(raw: &str, field: &str) -> Option<u64> {
+    let start = raw.find(field)?;
+    let value_start = raw[start..].find(':')? + start + 1;
+    let remainder = raw[value_start..].trim();
+    let end = remainder
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(remainder.len());
+    remainder[..end].trim().parse::<u64>().ok()
 }
 
 /// Run replay/backtest.
@@ -176,21 +579,43 @@ pub async fn run(
                     paper_book.market_book_mut().clear();
                     for (tick, size) in bids {
                         book.set_level_unchecked(Side::Buy, tick, size);
-                        paper_book.market_book_mut().set_level_unchecked(Side::Buy, tick, size);
+                        paper_book
+                            .market_book_mut()
+                            .set_level_unchecked(Side::Buy, tick, size);
                     }
                     for (tick, size) in asks {
                         book.set_level_unchecked(Side::Sell, tick, size);
-                        paper_book.market_book_mut().set_level_unchecked(Side::Sell, tick, size);
+                        paper_book
+                            .market_book_mut()
+                            .set_level_unchecked(Side::Sell, tick, size);
                     }
                 }
-                MarketDataEvent::BookDelta { side, tick, new_size, .. } => {
+                MarketDataEvent::BookDelta {
+                    side,
+                    tick,
+                    new_size,
+                    ..
+                } => {
                     if book.validate_inbound_tick(tick, "book").is_ok() {
                         book.set_level_unchecked(side, tick, new_size);
-                        paper_book.market_book_mut().set_level_unchecked(side, tick, new_size);
+                        paper_book
+                            .market_book_mut()
+                            .set_level_unchecked(side, tick, new_size);
                     }
                 }
-                MarketDataEvent::Trade { side, price_tick, size, timestamps, .. } => {
-                    let fills = fill_sim.on_trade(price_tick, size, side, timestamps.ts_process_mono_ns as u64);
+                MarketDataEvent::Trade {
+                    side,
+                    price_tick,
+                    size,
+                    timestamps,
+                    ..
+                } => {
+                    let fills = fill_sim.on_trade(
+                        price_tick,
+                        size,
+                        side,
+                        timestamps.ts_process_mono_ns as u64,
+                    );
                     handle_fills(
                         fills,
                         side,
@@ -241,7 +666,12 @@ pub async fn run(
 
         while let Some(action) = pending_actions.pop_front() {
             match action {
-                StrategyAction::PlaceOrder { side, kind, order_type, reason } => {
+                StrategyAction::PlaceOrder {
+                    side,
+                    kind,
+                    order_type,
+                    reason,
+                } => {
                     let client_order_id = order_manager.generate_client_id();
                     let queue_ahead = match kind {
                         OrderKind::Limit { price_tick, .. } => {
@@ -262,7 +692,11 @@ pub async fn run(
 
                     let order_id = fill_sim.submit_order_with_queue(order, queue_ahead, now_ns);
 
-                    if let OrderKind::Limit { price_tick, size_shares } = kind {
+                    if let OrderKind::Limit {
+                        price_tick,
+                        size_shares,
+                    } = kind
+                    {
                         paper_book.add_order(PaperOrder {
                             order_id,
                             client_order_id,
@@ -273,7 +707,9 @@ pub async fn run(
                         });
                     }
                 }
-                StrategyAction::CancelOrder { client_order_id, .. } => {
+                StrategyAction::CancelOrder {
+                    client_order_id, ..
+                } => {
                     let order_id = client_order_id.0.clone();
                     fill_sim.cancel_order(&order_id, now_ns);
                 }
@@ -323,7 +759,9 @@ fn handle_sim_events(fill_sim: &mut FillSimulator, paper_book: &mut PaperBook, n
             SimEvent::OrderCancelled { order_id, .. } => {
                 paper_book.remove_order(&order_id);
             }
-            SimEvent::OrderRejected { client_order_id, .. } => {
+            SimEvent::OrderRejected {
+                client_order_id, ..
+            } => {
                 let _ = paper_book.remove_order_by_client_id(&client_order_id);
             }
             SimEvent::OrderAcked { .. } => {}
@@ -387,9 +825,15 @@ fn event_timestamp(event: &CoreEvent) -> u64 {
             | MarketDataEvent::BookDelta { timestamps, .. }
             | MarketDataEvent::Trade { timestamps, .. }
             | MarketDataEvent::TickSizeChange { timestamps, .. }
-            | MarketDataEvent::BestBidAsk { timestamps, .. } => timestamps.ts_process_mono_ns as u64,
-            MarketDataEvent::ConnectionStatus { timestamp_mono_ns, .. }
-            | MarketDataEvent::ParseError { timestamp_mono_ns, .. } => *timestamp_mono_ns as u64,
+            | MarketDataEvent::BestBidAsk { timestamps, .. } => {
+                timestamps.ts_process_mono_ns as u64
+            }
+            MarketDataEvent::ConnectionStatus {
+                timestamp_mono_ns, ..
+            }
+            | MarketDataEvent::ParseError {
+                timestamp_mono_ns, ..
+            } => *timestamp_mono_ns as u64,
         },
         CoreEvent::Signal(signal) => signal.timestamp_mono_ns as u64,
         CoreEvent::OrderIntent(intent) => intent.timestamp_mono_ns as u64,
@@ -398,13 +842,80 @@ fn event_timestamp(event: &CoreEvent) -> u64 {
         CoreEvent::CancelAck(cancel) => cancel.timestamp_mono_ns as u64,
         CoreEvent::Risk(_) => 0,
         CoreEvent::System(system) => match system {
-            mtrader_core::events::SystemEvent::SafeMode { timestamp_mono_ns, .. }
+            mtrader_core::events::SystemEvent::SafeMode {
+                timestamp_mono_ns, ..
+            }
             | mtrader_core::events::SystemEvent::SafeModeCleared { timestamp_mono_ns }
-            | mtrader_core::events::SystemEvent::ResnaphotRequested { timestamp_mono_ns, .. }
-            | mtrader_core::events::SystemEvent::MarketLifecycle { timestamp_mono_ns, .. }
+            | mtrader_core::events::SystemEvent::ResnaphotRequested {
+                timestamp_mono_ns, ..
+            }
+            | mtrader_core::events::SystemEvent::MarketLifecycle {
+                timestamp_mono_ns, ..
+            }
             | mtrader_core::events::SystemEvent::Heartbeat { timestamp_mono_ns } => {
                 *timestamp_mono_ns as u64
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mtrader_core::events::EventTimestamps;
+    use mtrader_recorder::ParquetEventWriter;
+    use tempfile::tempdir;
+
+    fn make_timestamps(ts_ms: u64) -> EventTimestamps {
+        EventTimestamps {
+            ts_exchange_ms: ts_ms as i64,
+            ts_recv_mono_ns: (ts_ms * 1_000_000) as i64,
+            ts_process_mono_ns: (ts_ms * 1_000_000) as i64,
+        }
+    }
+
+    #[test]
+    fn parquet_roundtrip_market_data() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("events.parquet");
+
+        let mut writer = ParquetEventWriter::new();
+        writer.open(&path).unwrap();
+
+        let event = CoreEvent::MarketData(MarketDataEvent::BookDelta {
+            market_id: MarketId("market".to_string()),
+            token_id: TokenId("token".to_string()),
+            side: Side::Buy,
+            tick: 5000,
+            new_size: 100,
+            best_bid: Some(4990),
+            best_ask: Some(5010),
+            order_hash: "hash".to_string(),
+            timestamps: make_timestamps(1_000),
+        });
+        writer.write_event(&event).unwrap();
+
+        let trade = CoreEvent::MarketData(MarketDataEvent::Trade {
+            market_id: MarketId("market".to_string()),
+            token_id: TokenId("token".to_string()),
+            side: Side::Sell,
+            price_tick: 5050,
+            size: 50,
+            fee_rate_bps: 50,
+            timestamps: make_timestamps(2_000),
+        });
+        writer.write_event(&trade).unwrap();
+        writer.close().unwrap();
+
+        let loaded = load_events_from_parquet(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(matches!(
+            loaded[0],
+            CoreEvent::MarketData(MarketDataEvent::BookDelta { .. })
+        ));
+        assert!(matches!(
+            loaded[1],
+            CoreEvent::MarketData(MarketDataEvent::Trade { .. })
+        ));
     }
 }

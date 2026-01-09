@@ -50,7 +50,8 @@ impl Position {
 
             // Update average entry price
             if let Some(old_avg) = self.avg_entry_tick {
-                let weighted_avg = (old_avg as u64 * old_size + price_tick as u64 * new_size) / total_size;
+                let weighted_avg =
+                    (old_avg as u64 * old_size + price_tick as u64 * new_size) / total_size;
                 self.avg_entry_tick = Some(weighted_avg as Tick);
             }
 
@@ -156,7 +157,9 @@ impl PositionTracker {
         self.positions
             .iter()
             .filter_map(|(asset_id, pos)| {
-                prices.get(asset_id).map(|&price| pos.unrealized_pnl_micro_usdc(price))
+                prices
+                    .get(asset_id)
+                    .map(|&price| pos.unrealized_pnl_micro_usdc(price))
             })
             .sum()
     }

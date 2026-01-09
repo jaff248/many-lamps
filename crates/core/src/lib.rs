@@ -6,14 +6,14 @@
 //! - Event types for the deterministic core loop
 //! - Fee model with fixed-point arithmetic
 
-pub mod types;
-pub mod events;
-pub mod health;
-pub mod fees;
 pub mod clock;
+pub mod events;
+pub mod fees;
+pub mod health;
+pub mod types;
 
-pub use types::*;
-pub use events::*;
-pub use health::*;
-pub use fees::*;
 pub use clock::*;
+pub use events::*;
+pub use fees::*;
+pub use health::*;
+pub use types::*;
