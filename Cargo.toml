@@ -10,6 +10,8 @@ members = [
     "crates/recorder",
     "crates/sim",
     "crates/cli",
+    "crates/dashboard",
+    "crates/research",
 ]
 
 [workspace.package]
@@ -21,6 +23,10 @@ authors = ["Many Lamps Team"]
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
+
+# TUI
+ratatui = "0.28"
+crossterm = "0.28"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

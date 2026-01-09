@@ -17,6 +17,7 @@ mtrader-risk = { path = "../risk" }
 mtrader-strategy = { path = "../strategy" }
 mtrader-sim = { path = "../sim" }
 mtrader-recorder = { path = "../recorder" }
+mtrader-dashboard = { path = "../dashboard" }
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }

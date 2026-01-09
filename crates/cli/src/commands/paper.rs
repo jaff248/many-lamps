@@ -7,6 +7,7 @@ use mtrader_book::ArrayBook;
 use mtrader_core::clock::MonotonicClock;
 use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
 use mtrader_core::Side;
+use mtrader_dashboard::DashboardController;
 use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
 use mtrader_execution::state_manager::OrderManagerConfig;
 use mtrader_gateway::{ParsedEvent, RestClient, RestConfig, WsClient, WsConfig};
@@ -120,7 +121,11 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
     let mut pending_actions: VecDeque<StrategyAction> = VecDeque::new();
 
-    info!("Paper trading active - press Ctrl+C to stop");
+    // Initialize dashboard
+    let mut dashboard = DashboardController::new(market.to_string(), strategy_name.to_string());
+    dashboard.set_connected(true);
+
+    info!("Paper trading active - dashboard starting... press Ctrl+C to stop");
 
     loop {
         tokio::select! {
@@ -198,13 +203,20 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                 let our_bids = collect_working_orders(&paper_book, Side::Buy);
                 let our_asks = collect_working_orders(&paper_book, Side::Sell);
 
+                // Update dashboard
+                dashboard.update_book(&book);
+                dashboard.update_pnl(&pnl);
+                dashboard.update_position(&position);
+                dashboard.update_active_orders(our_bids.len(), our_asks.len());
+                dashboard.update_timestamp();
+
                 let context = StrategyContext::from_book(
                     &book,
                     market.to_string(),
                     position.clone(),
                     pnl,
-                    our_bids,
-                    our_asks,
+                    our_bids.clone(),
+                    our_asks.clone(),
                     now_ns,
                 );
 
