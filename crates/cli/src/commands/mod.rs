@@ -5,3 +5,5 @@ pub mod record;
 pub mod replay;
 pub mod market;
 pub mod backtest;
+pub mod tui;
+pub mod status;

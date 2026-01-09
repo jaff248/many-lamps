@@ -1,25 +1,29 @@
 [package]
 name = "mtrader-dashboard"
 version.workspace = true
-edition.workspace = true
+edition = "2021"
 
 [dependencies]
+# Core types
+many-lamps-core = { path = "../core" }
+many-lamps-book = { path = "../book" }
+many-lamps-gateway = { path = "../gateway" }
+
+# Trading
+mtrader-risk = { path = "../risk" }
+mtrader-sim = { path = "../sim" }
+mtrader-strategy = { path = "../strategy" }
+mtrader-execution = { path = "../execution" }
+
 # TUI
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 
-# Core types
-many-lamps-core = { path = "../core" }
-many-lamps-book = { path = "../book" }
-mtrader-risk = { path = "../risk" }
-mtrader-strategy = { path = "../strategy" }
-
 # Async
 tokio = { workspace = true }
 
-# Time
+# Utilities
 chrono = { workspace = true }
-
-# Serialization
+anyhow = { workspace = true }
+tracing = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }

@@ -2842,16 +2842,20 @@ dependencies = [
 name = "mtrader-dashboard"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "crossterm",
  "many-lamps-book",
  "many-lamps-core",
+ "many-lamps-gateway",
+ "mtrader-execution",
  "mtrader-risk",
+ "mtrader-sim",
  "mtrader-strategy",
  "ratatui",
  "serde",
- "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
