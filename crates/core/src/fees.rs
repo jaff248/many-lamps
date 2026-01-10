@@ -451,7 +451,6 @@ mod tests {
         assert_eq!(ledger.strategy_rebates("strategy_b"), 2_000_000);
     }
 
-    // Test against documented fee table points
     #[test]
     fn test_fee_table_verification() {
         let model = FeeModel::btc_15min();
