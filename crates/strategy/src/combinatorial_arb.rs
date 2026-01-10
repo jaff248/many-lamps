@@ -23,9 +23,7 @@ use mtrader_execution::{OrderKind, OrderType};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal_macros::dec;
-use std::any::Any;
-use std::collections::HashMap;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Types of dependency between two outcomes
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +79,7 @@ pub struct CombinatorialArbStrategy {
     config: CombinatorialArbConfig,
     /// Active dependencies indexed for fast lookup
     dependency_map: Vec<Dependency>,
+    active: bool,
 }
 
 impl CombinatorialArbStrategy {
@@ -88,6 +87,7 @@ impl CombinatorialArbStrategy {
         Self {
             dependency_map: config.dependencies.clone(),
             config,
+            active: false,
         }
     }
 
@@ -143,7 +143,11 @@ impl Strategy for CombinatorialArbStrategy {
         "combinatorial_arb"
     }
 
-    fn on_update(&mut self, ctx: &StrategyContext) -> Vec<StrategyAction> {
+    fn on_update(&mut self, _ctx: &StrategyContext) -> Vec<StrategyAction> {
+        if !self.active {
+            return Vec::new();
+        }
+
         let mut actions = Vec::new();
 
         // Iterate over all dependencies
@@ -174,8 +178,22 @@ impl Strategy for CombinatorialArbStrategy {
         // Handle fill updates (e.g., update position tracking for multi-leg trade)
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn on_halt(&mut self) {
+        self.active = false;
+    }
+
+    fn on_resume(&mut self) {}
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn activate(&mut self) {
+        self.active = true;
+    }
+
+    fn deactivate(&mut self) {
+        self.active = false;
     }
 }
 
