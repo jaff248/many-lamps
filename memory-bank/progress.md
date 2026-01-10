@@ -58,14 +58,37 @@
 - Risk settings displayed
 - Safety warning banner
 
-## Current Status
+## Current Status (Verified Jan 9, 2026)
 - **Overall**: 90% complete
 - **Documentation**: 100% (tui-requirements.md complete)
 - **Core Trading**: 90% (TUI integrated, strategy wiring pending)
 
-## QA Status
-- Ran CLI surface tests (status, list, validate-config, backtest, replay).
-- TUI launches in headless mode but still mock-wired; live WS/REST unavailable in this environment.
+## QA Status (Verified)
+- ✅ Dashboard tests: **13/13 passing**
+- ✅ CLI builds: **Successful** (5 warnings, 0 errors)
+- ✅ TUI v2.0: Compiles and runs
+- ✅ All keyboard shortcuts documented
+- ⚠️ Live WS/REST: Unavailable in this environment (expected)
+
+## Test Results
+```
+running 13 tests
+test test_activity_log_max_50 ... ok
+test test_auto_trading_state_variants ... ok
+test test_confirm_action_equality ... ok
+test test_default_markets_count ... ok
+test test_drawdown_bps_no_loss ... ok
+test test_edit_field_equality ... ok
+test test_market_default ... ok
+test test_menu_item_variants ... ok
+test test_risk_config_default ... ok
+test test_set_status ... ok
+test test_spread_calculation ... ok
+test test_strategy_params_default ... ok
+test test_trading_mode_variants ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored
+```
 
 ## What's Left
 - Wire actual strategy execution to TUI event loop
