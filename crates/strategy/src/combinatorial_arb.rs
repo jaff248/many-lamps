@@ -18,14 +18,9 @@
 //! 3. Executes spread trades when logical invariants are violated.
 
 use crate::{Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{Side, Size};
+use mtrader_core::{OrderReason, Side, Size, Tick, UsdcAmount, SIZE_DECIMALS};
 use mtrader_execution::{OrderKind, OrderType};
-use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
-use rust_decimal_macros::dec;
-use std::any::Any;
-use std::collections::HashMap;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Types of dependency between two outcomes
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,7 +57,7 @@ pub struct CombinatorialArbConfig {
     /// List of known dependencies to monitor
     pub dependencies: Vec<Dependency>,
     /// Maximum position size (in USDC) per trade leg
-    pub max_leg_size_usdc: Decimal,
+    pub max_leg_size_usdc: UsdcAmount,
     /// Minimum profit threshold in basis points to trigger execution
     pub min_profit_threshold_bps: u32,
 }
@@ -71,7 +66,7 @@ impl Default for CombinatorialArbConfig {
     fn default() -> Self {
         Self {
             dependencies: vec![],
-            max_leg_size_usdc: dec!(100.0),
+            max_leg_size_usdc: 100_000_000,
             min_profit_threshold_bps: 50, // 0.5%
         }
     }
@@ -81,6 +76,7 @@ pub struct CombinatorialArbStrategy {
     config: CombinatorialArbConfig,
     /// Active dependencies indexed for fast lookup
     dependency_map: Vec<Dependency>,
+    active: bool,
 }
 
 impl CombinatorialArbStrategy {
@@ -88,14 +84,15 @@ impl CombinatorialArbStrategy {
         Self {
             dependency_map: config.dependencies.clone(),
             config,
+            active: true,
         }
     }
 
     fn check_implication_arb(
         &self,
         dep: &Dependency,
-        source_price: Decimal,
-        target_price: Decimal,
+        source_price: Tick,
+        target_price: Tick,
     ) -> Option<Vec<StrategyAction>> {
         // Implication: Source IMPLIES Target.
         // Logical constraint: Prob(Source) <= Prob(Target).
@@ -103,8 +100,8 @@ impl CombinatorialArbStrategy {
         // Action: Sell Source (overpriced), Buy Target (underpriced).
 
         if source_price > target_price {
-            let diff = source_price - target_price;
-            let profit_bps = (diff * dec!(10000)).to_u32().unwrap_or(0);
+            let diff = source_price.saturating_sub(target_price);
+            let profit_bps = diff as u32;
 
             if profit_bps >= dep.min_profit_bps.max(self.config.min_profit_threshold_bps) {
                 info!(
@@ -113,22 +110,23 @@ impl CombinatorialArbStrategy {
                 );
 
                 let mut actions = Vec::new();
-                let size_shares = 10; // Placeholder: Calculate based on max_leg_size_usdc
+                let size_shares: Size = 10 * SIZE_DECIMALS;
+                let usdc_amount = self.config.max_leg_size_usdc;
 
                 // 1. Sell Source (Short)
                 actions.push(StrategyAction::PlaceOrder {
                     side: Side::Sell,
-                    kind: OrderKind::Market { size_shares },
-                    order_type: OrderType::GoodForDay,
-                    reason: format!("CombArb: Sell Overpriced Source {}", dep.source_token_id),
+                    kind: OrderKind::MarketSell { size_shares },
+                    order_type: OrderType::FOK,
+                    reason: OrderReason::Signal,
                 });
 
                 // 2. Buy Target (Long)
                 actions.push(StrategyAction::PlaceOrder {
                     side: Side::Buy,
-                    kind: OrderKind::Market { size_shares },
-                    order_type: OrderType::GoodForDay,
-                    reason: format!("CombArb: Buy Underpriced Target {}", dep.target_token_id),
+                    kind: OrderKind::MarketBuy { usdc_amount },
+                    order_type: OrderType::FOK,
+                    reason: OrderReason::Signal,
                 });
 
                 return Some(actions);
@@ -143,7 +141,11 @@ impl Strategy for CombinatorialArbStrategy {
         "combinatorial_arb"
     }
 
-    fn on_update(&mut self, ctx: &StrategyContext) -> Vec<StrategyAction> {
+    fn on_update(&mut self, _ctx: &StrategyContext) -> Vec<StrategyAction> {
+        if !self.active {
+            return vec![];
+        }
+
         let mut actions = Vec::new();
 
         // Iterate over all dependencies
@@ -152,14 +154,16 @@ impl Strategy for CombinatorialArbStrategy {
             // In a real multi-market strategy, `ctx` needs to provide access to ALL markets.
             // This is a limitation of the current `StrategyContext` which is per-market.
             // TODO: Refactor StrategyContext to support multi-market view.
-            
+
             // Placeholder logic assuming ctx has prices we need (which it currently doesn't fully support)
-            let source_price = dec!(0.60); // Mock
-            let target_price = dec!(0.55); // Mock
+            let source_price: Tick = 6000; // Mock
+            let target_price: Tick = 5500; // Mock
 
             match dep.relation {
                 DependencyType::Implication => {
-                    if let Some(arb_actions) = self.check_implication_arb(dep, source_price, target_price) {
+                    if let Some(arb_actions) =
+                        self.check_implication_arb(dep, source_price, target_price)
+                    {
                         actions.extend(arb_actions);
                     }
                 }
@@ -174,16 +178,30 @@ impl Strategy for CombinatorialArbStrategy {
         // Handle fill updates (e.g., update position tracking for multi-leg trade)
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn on_halt(&mut self) {
+        self.active = false;
+    }
+
+    fn on_resume(&mut self) {
+        self.active = true;
+    }
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn activate(&mut self) {
+        self.active = true;
+    }
+
+    fn deactivate(&mut self) {
+        self.active = false;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mtrader_book::ArrayBook;
-    use mtrader_risk::{PnLSnapshot, Position};
 
     #[test]
     fn test_implication_arb_detection() {
@@ -204,11 +222,11 @@ mod tests {
         let strategy = CombinatorialArbStrategy::new(config);
 
         // Case 1: No Arb (Source < Target)
-        let actions = strategy.check_implication_arb(&dep, dec!(0.40), dec!(0.50));
+        let actions = strategy.check_implication_arb(&dep, 4000, 5000);
         assert!(actions.is_none());
 
         // Case 2: Arb Exists (Source > Target by 5%)
-        let actions = strategy.check_implication_arb(&dep, dec!(0.55), dec!(0.50));
+        let actions = strategy.check_implication_arb(&dep, 5500, 5000);
         assert!(actions.is_some());
         let actions = actions.unwrap();
         assert_eq!(actions.len(), 2); // Sell Source, Buy Target

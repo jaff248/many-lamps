@@ -9,6 +9,7 @@
 
 pub mod auto_hedge;
 pub mod bundle_maker;
+pub mod combinatorial_arb;
 pub mod flow;
 pub mod maker_mm;
 pub mod rebalancing_arb;
@@ -18,6 +19,9 @@ pub mod unaffected_arb;
 
 pub use auto_hedge::AutoHedgeStrategy;
 pub use bundle_maker::BundleMakerStrategy;
+pub use combinatorial_arb::{
+    CombinatorialArbConfig, CombinatorialArbStrategy, Dependency, DependencyType,
+};
 pub use flow::{FlowSignal, FlowSignalConfig, FlowSnapshot};
 pub use maker_mm::MakerMMStrategy;
 pub use rebalancing_arb::{
