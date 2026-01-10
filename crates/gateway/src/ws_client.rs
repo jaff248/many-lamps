@@ -11,11 +11,7 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::{interval, timeout};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-    MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 /// WebSocket endpoint for Polymarket CLOB.
 pub const WS_URL: &str = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
@@ -164,13 +160,7 @@ async fn ws_task(
         };
 
         // Run connection loop
-        let result = connection_loop(
-            &mut client,
-            ws,
-            &frame_tx,
-            &mut cmd_rx,
-        )
-        .await;
+        let result = connection_loop(&mut client, ws, &frame_tx, &mut cmd_rx).await;
 
         match result {
             ConnectionResult::Shutdown => return,
@@ -184,9 +174,7 @@ async fn ws_task(
         }
 
         if client.state == WsState::Failed {
-            let _ = frame_tx
-                .send(Err(GatewayError::ConnectionClosed))
-                .await;
+            let _ = frame_tx.send(Err(GatewayError::ConnectionClosed)).await;
             return;
         }
     }
@@ -208,9 +196,7 @@ enum ConnectionResult {
     Disconnected,
 }
 
-async fn connect(
-    url: &str,
-) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, GatewayError> {
+async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, GatewayError> {
     let (ws, _) = connect_async(url).await?;
     Ok(ws)
 }

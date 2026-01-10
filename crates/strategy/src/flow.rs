@@ -74,9 +74,7 @@ impl FlowSignal {
         capacity_proxy: f64,
         timestamp_ns: u64,
     ) -> FlowSnapshot {
-        let signed_flow = self
-            .signed_flow_window
-            .push(timestamp_ns, signed_notional);
+        let signed_flow = self.signed_flow_window.push(timestamp_ns, signed_notional);
         let volume = self.volume_window.push(timestamp_ns, trade_notional.abs());
 
         if capacity_proxy.is_finite() && capacity_proxy > 0.0 {

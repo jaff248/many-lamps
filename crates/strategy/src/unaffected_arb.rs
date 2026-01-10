@@ -29,7 +29,7 @@ impl Default for UnaffectedArbConfig {
     fn default() -> Self {
         Self {
             min_profit_micro_usdc: 100_000, // $0.10 minimum profit
-            leg_size: 1_000_000, // 1 share per leg
+            leg_size: 1_000_000,            // 1 share per leg
             max_concurrent_arbs: 3,
             fee_profile: MarketFeeProfile::zero("unaffected"),
             eligible_fee_schedules: vec![FeeScheduleKind::Zero],
@@ -84,7 +84,10 @@ impl UnaffectedArbStrategy {
     }
 
     fn calculate_fee(&self, price_tick: Tick, size: Size) -> i64 {
-        self.config.fee_profile.schedule.calculate_fee(price_tick, size) as i64
+        self.config
+            .fee_profile
+            .schedule
+            .calculate_fee(price_tick, size) as i64
     }
 
     fn check_arb_opportunity(&self, yes_ask: Tick, no_ask: Tick) -> Option<i64> {

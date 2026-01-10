@@ -81,7 +81,13 @@ fn format_pnl_micro(micro: i64) -> String {
 }
 
 fn pnl_style(pnl: i64) -> Style {
-    if pnl > 0 { Style::default().fg(Color::Green) } else if pnl < 0 { Style::default().fg(Color::Red) } else { Style::default().fg(Color::Gray) }
+    if pnl > 0 {
+        Style::default().fg(Color::Green)
+    } else if pnl < 0 {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::Gray)
+    }
 }
 
 /// Dashboard Widget
@@ -114,15 +120,16 @@ impl Widget for &DashboardWidget {
 
 impl DashboardWidget {
     fn render_header(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let status = if self.state.connected { "CONNECTED" } else { "DISCONNECTED" };
+        let status = if self.state.connected {
+            "CONNECTED"
+        } else {
+            "DISCONNECTED"
+        };
         let recording = if self.state.recording { " REC" } else { "" };
-        
+
         let title = format!(
             " MTrader | {} | {} | {}{} ",
-            self.state.market_id,
-            self.state.strategy_name,
-            status,
-            recording
+            self.state.market_id, self.state.strategy_name, status, recording
         );
         let style = Style::default()
             .bg(Color::Blue)
@@ -133,11 +140,8 @@ impl DashboardWidget {
     }
 
     fn render_market_position(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let chunks = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(area);
+        let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
 
         let market_block = Block::default()
             .title(" Market Data ")
@@ -146,14 +150,40 @@ impl DashboardWidget {
         let inner = market_block.inner(chunks[0]);
         market_block.render(chunks[0], buf);
 
-        let bid_str = self.state.best_bid.map(|b| format!("{:.4}", b as f64 / 10000.0)).unwrap_or_else(|| "--".to_string());
-        let ask_str = self.state.best_ask.map(|a| format!("{:.4}", a as f64 / 10000.0)).unwrap_or_else(|| "--".to_string());
-        let spread_str = self.state.spread_ticks.map(|s| s.to_string()).unwrap_or_else(|| "--".to_string());
+        let bid_str = self
+            .state
+            .best_bid
+            .map(|b| format!("{:.4}", b as f64 / 10000.0))
+            .unwrap_or_else(|| "--".to_string());
+        let ask_str = self
+            .state
+            .best_ask
+            .map(|a| format!("{:.4}", a as f64 / 10000.0))
+            .unwrap_or_else(|| "--".to_string());
+        let spread_str = self
+            .state
+            .spread_ticks
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "--".to_string());
 
         let market_content = vec![
-            Line::from(vec![Span::raw("Bid:  "), Span::raw(bid_str).style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))]),
-            Line::from(vec![Span::raw("Ask:  "), Span::raw(ask_str).style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))]),
-            Line::from(vec![Span::raw("Spread: "), Span::raw(spread_str).style(Style::default().fg(Color::Yellow))]),
+            Line::from(vec![
+                Span::raw("Bid:  "),
+                Span::raw(bid_str).style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("Ask:  "),
+                Span::raw(ask_str)
+                    .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::raw("Spread: "),
+                Span::raw(spread_str).style(Style::default().fg(Color::Yellow)),
+            ]),
             Line::from(vec![Span::raw("Time: "), Span::raw(&self.state.timestamp)]),
         ];
         Paragraph::new(market_content).render(inner, buf);
@@ -165,20 +195,49 @@ impl DashboardWidget {
         let inner = pnl_block.inner(chunks[1]);
         pnl_block.render(chunks[1], buf);
 
-        let position_style = if self.state.position > 0 { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) } else if self.state.position < 0 { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) };
+        let position_style = if self.state.position > 0 {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else if self.state.position < 0 {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        };
 
         let pnl_content = vec![
-            Line::from(vec![Span::raw("Position:     "), Span::raw(format!("{}", self.state.position)).style(position_style)]),
-            Line::from(vec![Span::raw("Realized PnL: "), Span::raw(format_pnl_micro(self.state.realized_pnl)).style(pnl_style(self.state.realized_pnl))]),
-            Line::from(vec![Span::raw("Unrealized:   "), Span::raw(format_pnl_micro(self.state.unrealized_pnl)).style(pnl_style(self.state.unrealized_pnl))]),
-            Line::from(vec![Span::raw("Total Fees:   "), Span::raw(format_pnl_micro(self.state.total_fees)).style(Style::default().fg(Color::Yellow))]),
-            Line::from(vec![Span::raw("Trades:       "), Span::raw(self.state.trades_count.to_string())]),
+            Line::from(vec![
+                Span::raw("Position:     "),
+                Span::raw(format!("{}", self.state.position)).style(position_style),
+            ]),
+            Line::from(vec![
+                Span::raw("Realized PnL: "),
+                Span::raw(format_pnl_micro(self.state.realized_pnl))
+                    .style(pnl_style(self.state.realized_pnl)),
+            ]),
+            Line::from(vec![
+                Span::raw("Unrealized:   "),
+                Span::raw(format_pnl_micro(self.state.unrealized_pnl))
+                    .style(pnl_style(self.state.unrealized_pnl)),
+            ]),
+            Line::from(vec![
+                Span::raw("Total Fees:   "),
+                Span::raw(format_pnl_micro(self.state.total_fees))
+                    .style(Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(vec![
+                Span::raw("Trades:       "),
+                Span::raw(self.state.trades_count.to_string()),
+            ]),
         ];
         Paragraph::new(pnl_content).render(inner, buf);
     }
 
     fn render_orders(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+        let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
 
         let bids_block = Block::default()
             .title(format!(" Active Bids ({}) ", self.state.active_bids))
@@ -192,7 +251,9 @@ impl DashboardWidget {
         } else {
             "No active bids"
         };
-        Paragraph::new(bid_text).style(Style::default().fg(Color::Gray)).render(inner, buf);
+        Paragraph::new(bid_text)
+            .style(Style::default().fg(Color::Gray))
+            .render(inner, buf);
 
         let asks_block = Block::default()
             .title(format!(" Active Asks ({}) ", self.state.active_asks))
@@ -206,37 +267,50 @@ impl DashboardWidget {
         } else {
             "No active asks"
         };
-        Paragraph::new(ask_text).style(Style::default().fg(Color::Gray)).render(inner, buf);
+        Paragraph::new(ask_text)
+            .style(Style::default().fg(Color::Gray))
+            .render(inner, buf);
     }
 
     fn render_activity(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
         let log_area = Rect::new(area.x, area.y, area.width, area.height - 3);
         let status_area = Rect::new(area.x, area.y + area.height - 3, area.width, 3);
 
-        let block = Block::default().title(" Activity Log ").borders(Borders::ALL).style(Style::default().fg(Color::White));
+        let block = Block::default()
+            .title(" Activity Log ")
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::White));
         let inner = block.inner(log_area);
         block.render(log_area, buf);
 
-        let items: Vec<ListItem> = self.state.recent_actions.iter().take(15).map(|action| {
-            let style = if action.contains("BUY") {
-                Style::default().fg(Color::Green)
-            } else if action.contains("SELL") {
-                Style::default().fg(Color::Red)
-            } else if action.contains("Place") {
-                Style::default().fg(Color::Cyan)
-            } else if action.contains("Cancel") {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-            ListItem::new(action.clone()).style(style)
-        }).collect();
+        let items: Vec<ListItem> = self
+            .state
+            .recent_actions
+            .iter()
+            .take(15)
+            .map(|action| {
+                let style = if action.contains("BUY") {
+                    Style::default().fg(Color::Green)
+                } else if action.contains("SELL") {
+                    Style::default().fg(Color::Red)
+                } else if action.contains("Place") {
+                    Style::default().fg(Color::Cyan)
+                } else if action.contains("Cancel") {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                };
+                ListItem::new(action.clone()).style(style)
+            })
+            .collect();
 
         List::new(items).render(inner, buf);
 
         let help_text = " [Enter] Select [r] Record [s] Switch [q] Quit ";
         let help_style = Style::default().bg(Color::DarkGray).fg(Color::White);
-        Paragraph::new(help_text).style(help_style).render(status_area, buf);
+        Paragraph::new(help_text)
+            .style(help_style)
+            .render(status_area, buf);
     }
 }
 
@@ -267,10 +341,12 @@ impl DashboardController {
             loop {
                 match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(new_state) => {
-                        terminal.draw(|f| {
-                            let widget = DashboardWidget::new(new_state);
-                            f.render_widget(&widget, f.size());
-                        }).ok();
+                        terminal
+                            .draw(|f| {
+                                let widget = DashboardWidget::new(new_state);
+                                f.render_widget(&widget, f.size());
+                            })
+                            .ok();
                     }
                     Err(_) => {
                         if thread::panicking() {
@@ -375,6 +451,14 @@ Stop Losses:         {}
 Round Losses:        {}
 ==========================
 "#,
-        start_str, end_str, pnl_str, roi_str, cycles, leg1_triggers, leg2_triggers, stop_losses, round_losses
+        start_str,
+        end_str,
+        pnl_str,
+        roi_str,
+        cycles,
+        leg1_triggers,
+        leg2_triggers,
+        stop_losses,
+        round_losses
     )
 }

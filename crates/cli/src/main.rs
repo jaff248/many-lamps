@@ -7,8 +7,8 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 
-mod config;
 mod commands;
+mod config;
 mod fee_profile;
 mod logging;
 
@@ -17,7 +17,12 @@ use commands::{backtest, market, paper, record, replay, status, tui};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn get_available_strategies() -> Vec<&'static str> {
-    vec!["maker_mm", "bundle_maker", "unaffected_arb", "rebalancing_arb"]
+    vec![
+        "maker_mm",
+        "bundle_maker",
+        "unaffected_arb",
+        "rebalancing_arb",
+    ]
 }
 
 #[derive(Parser)]
@@ -162,7 +167,11 @@ fn print_footer() {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let log_level = if cli.verbose { "debug".to_string() } else { cli.log_level.clone() };
+    let log_level = if cli.verbose {
+        "debug".to_string()
+    } else {
+        cli.log_level.clone()
+    };
     logging::init(&log_level, cli.json_logs)?;
 
     let command = match cli.command {
@@ -176,7 +185,10 @@ async fn main() -> Result<()> {
             println!();
             print_example("mtrader", "Start interactive mode");
             print_example("mtrader tui", "Launch full-screen TUI");
-            print_example("mtrader paper --market btc-updown-15m-1767933000", "Paper trade");
+            print_example(
+                "mtrader paper --market btc-updown-15m-1767933000",
+                "Paper trade",
+            );
             print_example("mtrader list strategies", "See available strategies");
             println!();
             println!("  For more help: mtrader --help");
@@ -188,33 +200,71 @@ async fn main() -> Result<()> {
     let config = config::load_config(&cli.config)?;
 
     match command {
-        Commands::Paper { market, strategy, record } => {
+        Commands::Paper {
+            market,
+            strategy,
+            record,
+        } => {
             let market = match market {
                 Some(m) => m,
                 None => prompt_value("Market token ID", None, true)?,
             };
             paper::run(&config, &market, &strategy, record).await?;
         }
-        Commands::Record { market, output, duration } => {
+        Commands::Record {
+            market,
+            output,
+            duration,
+        } => {
             let market = match market {
                 Some(m) => m,
                 None => prompt_value("Market token ID", None, true)?,
             };
             record::run(&config, &market, &output, duration.as_deref()).await?;
         }
-        Commands::Replay { input, strategy, speed, report } => {
+        Commands::Replay {
+            input,
+            strategy,
+            speed,
+            report,
+        } => {
             let input = match input {
                 Some(i) => i,
                 None => prompt_value("Input file or directory", None, true)?,
             };
             replay::run(&config, &input, &strategy, speed, report.as_deref()).await?;
         }
-        Commands::BacktestAuto { input, shares, sum_target, dip_threshold, window_minutes, dip_window_ms, fee_rate_bps, spread_bps, leg2_timeout_seconds, starting_balance, report } => {
+        Commands::BacktestAuto {
+            input,
+            shares,
+            sum_target,
+            dip_threshold,
+            window_minutes,
+            dip_window_ms,
+            fee_rate_bps,
+            spread_bps,
+            leg2_timeout_seconds,
+            starting_balance,
+            report,
+        } => {
             let input = match input {
                 Some(i) => i,
                 None => prompt_value("Input file or directory", None, true)?,
             };
-            backtest::run_auto_backtest(&config, &input, shares, sum_target, dip_threshold, window_minutes, dip_window_ms, fee_rate_bps, spread_bps, leg2_timeout_seconds, starting_balance, report.as_deref())?;
+            backtest::run_auto_backtest(
+                &config,
+                &input,
+                shares,
+                sum_target,
+                dip_threshold,
+                window_minutes,
+                dip_window_ms,
+                fee_rate_bps,
+                spread_bps,
+                leg2_timeout_seconds,
+                starting_balance,
+                report.as_deref(),
+            )?;
         }
         Commands::Market { market } => {
             let market = match market {
@@ -223,40 +273,38 @@ async fn main() -> Result<()> {
             };
             market::show(&config, &market).await?;
         }
-        Commands::List { resource } => {
-            match resource.as_deref() {
-                Some("strategies") | Some("strategy") => {
-                    println!();
-                    println!("📋 Available Strategies:");
-                    print_header("Strategies");
-                    for (i, s) in get_available_strategies().iter().enumerate() {
-                        let desc = match *s {
-                            "maker_mm" => "Market making - earn spread",
-                            "bundle_maker" => "Bundle arbitrage",
-                            "unaffected_arb" => "Unaffected asset arbitrage",
-                            "rebalancing_arb" => "NO/YES rebalancing arb",
-                            _ => "Unknown strategy",
-                        };
-                        println!("  {}  {}", i + 1, desc);
-                    }
-                    print_footer();
+        Commands::List { resource } => match resource.as_deref() {
+            Some("strategies") | Some("strategy") => {
+                println!();
+                println!("📋 Available Strategies:");
+                print_header("Strategies");
+                for (i, s) in get_available_strategies().iter().enumerate() {
+                    let desc = match *s {
+                        "maker_mm" => "Market making - earn spread",
+                        "bundle_maker" => "Bundle arbitrage",
+                        "unaffected_arb" => "Unaffected asset arbitrage",
+                        "rebalancing_arb" => "NO/YES rebalancing arb",
+                        _ => "Unknown strategy",
+                    };
+                    println!("  {}  {}", i + 1, desc);
                 }
-                Some("markets") | Some("market") => {
-                    println!();
-                    println!("📈 Example Markets:");
-                    print_header("Markets");
-                    println!("  btc-updown-15m-1767933000  BTC 15-min up/down");
-                    println!("  btc-updown-15m-1767994200  BTC 15-min up/down");
-                    println!("  eth-updown-15m-1767933000  ETH 15-min up/down");
-                    print_footer();
-                }
-                _ => {
-                    println!("Usage: mtrader list <strategies|markets>");
-                    println!();
-                    println!("Available: strategies, markets");
-                }
+                print_footer();
             }
-        }
+            Some("markets") | Some("market") => {
+                println!();
+                println!("📈 Example Markets:");
+                print_header("Markets");
+                println!("  btc-updown-15m-1767933000  BTC 15-min up/down");
+                println!("  btc-updown-15m-1767994200  BTC 15-min up/down");
+                println!("  eth-updown-15m-1767933000  ETH 15-min up/down");
+                print_footer();
+            }
+            _ => {
+                println!("Usage: mtrader list <strategies|markets>");
+                println!();
+                println!("Available: strategies, markets");
+            }
+        },
         Commands::Status { verbose } => {
             status::run(&cli.config, verbose)?;
         }

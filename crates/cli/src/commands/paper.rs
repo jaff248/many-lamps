@@ -8,20 +8,20 @@ use mtrader_core::clock::MonotonicClock;
 use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
 use mtrader_core::Side;
 use mtrader_dashboard::DashboardController;
-use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
 use mtrader_execution::state_manager::OrderManagerConfig;
+use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
 use mtrader_gateway::{ParsedEvent, RestClient, RestConfig, WsClient, WsConfig};
 use mtrader_risk::{PnLSnapshot, Position};
-use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook};
 use mtrader_sim::fill_sim::SimEvent;
 use mtrader_sim::paper_book::PaperOrder;
+use mtrader_sim::{FillSimConfig, FillSimulator, PaperBook};
+use mtrader_strategy::bundle_maker::BundleMakerConfig;
+use mtrader_strategy::maker_mm::MakerMMConfig;
+use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
 use mtrader_strategy::{
     BundleMakerStrategy, MakerMMStrategy, Strategy, StrategyAction, StrategyContext,
     UnaffectedArbStrategy, WorkingOrder,
 };
-use mtrader_strategy::bundle_maker::BundleMakerConfig;
-use mtrader_strategy::maker_mm::MakerMMConfig;
-use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
 use std::collections::VecDeque;
 use tracing::{error, info, warn};
 
@@ -303,7 +303,9 @@ fn handle_sim_events(fill_sim: &mut FillSimulator, paper_book: &mut PaperBook, n
             SimEvent::OrderCancelled { order_id, .. } => {
                 paper_book.remove_order(&order_id);
             }
-            SimEvent::OrderRejected { client_order_id, .. } => {
+            SimEvent::OrderRejected {
+                client_order_id, ..
+            } => {
                 let _ = paper_book.remove_order_by_client_id(&client_order_id);
             }
             SimEvent::OrderAcked { .. } => {}

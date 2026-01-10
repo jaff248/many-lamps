@@ -180,13 +180,17 @@ impl BookSync {
         }
 
         // Validate tick
-        if let Err(e) = self.book.validate_inbound_tick(delta.tick, &delta.price_str) {
+        if let Err(e) = self
+            .book
+            .validate_inbound_tick(delta.tick, &delta.price_str)
+        {
             self.state = BookSyncState::Syncing;
             return SyncResult::InvalidTick { error: e };
         }
 
         // Apply the delta
-        self.book.set_level_unchecked(delta.side, delta.tick, delta.new_size);
+        self.book
+            .set_level_unchecked(delta.side, delta.tick, delta.new_size);
 
         // Update timestamp
         *last_delta_ts = delta.timestamp;
@@ -200,7 +204,7 @@ impl BookSync {
         self.book.set_tick_size(new_tick_size);
         self.book.clear();
         self.state = BookSyncState::Syncing;
-        
+
         SyncResult::NeedResnapshot {
             token_id: self.token_id.clone(),
             reason: "Tick size changed".to_string(),
@@ -289,9 +293,9 @@ impl BookSync {
     /// Check if we should request REST verification
     pub fn should_verify(&self, now_ms: u64, interval_ms: u64) -> bool {
         match &self.state {
-            BookSyncState::Synced { last_snapshot_ts, .. } => {
-                now_ms.saturating_sub(*last_snapshot_ts) >= interval_ms
-            }
+            BookSyncState::Synced {
+                last_snapshot_ts, ..
+            } => now_ms.saturating_sub(*last_snapshot_ts) >= interval_ms,
             _ => false,
         }
     }
@@ -372,11 +376,11 @@ mod tests {
     fn test_snapshot_syncs_book() {
         let mut sync = make_sync();
         let snapshot = make_snapshot();
-        
+
         let result = sync.on_snapshot(snapshot);
         assert!(matches!(result, SyncResult::Synced));
         assert!(sync.state().is_synced());
-        
+
         let book = sync.book().unwrap();
         assert_eq!(book.best_bid(), Some(4900));
         assert_eq!(book.best_ask(), Some(5100));
@@ -385,7 +389,7 @@ mod tests {
     #[test]
     fn test_delta_requires_synced() {
         let mut sync = make_sync();
-        
+
         let delta = BookDelta {
             market_id: MarketId("0xtest".to_string()),
             token_id: TokenId("123456".to_string()),
@@ -395,16 +399,16 @@ mod tests {
             price_str: "0.50".to_string(),
             timestamp: 2000,
         };
-        
+
         // Should be ignored when not synced
         let result = sync.on_delta(delta.clone());
         assert!(matches!(result, SyncResult::Ignored));
-        
+
         // After snapshot, delta should apply
         sync.on_snapshot(make_snapshot());
         let result = sync.on_delta(delta);
         assert!(matches!(result, SyncResult::Applied));
-        
+
         let book = sync.book().unwrap();
         assert_eq!(book.best_bid(), Some(5000)); // New best bid
     }
@@ -413,7 +417,7 @@ mod tests {
     fn test_invalid_tick_triggers_resync() {
         let mut sync = make_sync();
         sync.on_snapshot(make_snapshot());
-        
+
         // Invalid tick (not divisible by 100)
         let delta = BookDelta {
             market_id: MarketId("0xtest".to_string()),
@@ -424,7 +428,7 @@ mod tests {
             price_str: "0.505".to_string(),
             timestamp: 2000,
         };
-        
+
         let result = sync.on_delta(delta);
         assert!(matches!(result, SyncResult::InvalidTick { .. }));
         assert!(matches!(sync.state(), BookSyncState::Syncing));
@@ -435,7 +439,7 @@ mod tests {
         let mut sync = make_sync();
         sync.on_snapshot(make_snapshot());
         assert!(sync.state().is_synced());
-        
+
         let result = sync.on_tick_size_change(10);
         assert!(matches!(result, SyncResult::NeedResnapshot { .. }));
         assert!(matches!(sync.state(), BookSyncState::Syncing));
@@ -445,7 +449,7 @@ mod tests {
     fn test_disconnect_triggers_resync() {
         let mut sync = make_sync();
         sync.on_snapshot(make_snapshot());
-        
+
         let result = sync.on_disconnect();
         assert!(matches!(result, SyncResult::NeedResnapshot { .. }));
         assert!(matches!(sync.state(), BookSyncState::Syncing));
@@ -455,7 +459,7 @@ mod tests {
     fn test_verify_against_rest_success() {
         let mut sync = make_sync();
         sync.on_snapshot(make_snapshot());
-        
+
         let rest = RestBookSnapshot {
             tick_size: 100,
             best_bid: Some(4900),
@@ -463,7 +467,7 @@ mod tests {
             top_bids: vec![(4900, 100_000_000), (4800, 200_000_000)],
             top_asks: vec![(5100, 150_000_000), (5200, 250_000_000)],
         };
-        
+
         assert!(sync.verify_against_rest(&rest).is_ok());
     }
 
@@ -471,7 +475,7 @@ mod tests {
     fn test_verify_against_rest_mismatch() {
         let mut sync = make_sync();
         sync.on_snapshot(make_snapshot());
-        
+
         // Best bid mismatch
         let rest = RestBookSnapshot {
             tick_size: 100,
@@ -480,7 +484,7 @@ mod tests {
             top_bids: vec![],
             top_asks: vec![],
         };
-        
+
         let result = sync.verify_against_rest(&rest);
         assert!(matches!(result, Err(BookError::BestPriceMismatch { .. })));
     }
@@ -488,10 +492,10 @@ mod tests {
     #[test]
     fn test_wrong_token_ignored() {
         let mut sync = make_sync();
-        
+
         let mut snapshot = make_snapshot();
         snapshot.token_id = TokenId("999999".to_string()); // Different token
-        
+
         let result = sync.on_snapshot(snapshot);
         assert!(matches!(result, SyncResult::Ignored));
         assert!(matches!(sync.state(), BookSyncState::Unsynced));

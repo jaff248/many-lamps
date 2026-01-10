@@ -153,10 +153,12 @@ impl OrderStateManager {
             .remove(client_order_id)
             .ok_or_else(|| ExecutionError::OrderNotFound(client_order_id.to_string()))?;
 
-        order.reject(now_ns).map_err(|e| ExecutionError::InvalidStateTransition {
-            from: format!("{:?}", e.from),
-            to: format!("{:?}", e.to),
-        })?;
+        order
+            .reject(now_ns)
+            .map_err(|e| ExecutionError::InvalidStateTransition {
+                from: format!("{:?}", e.from),
+                to: format!("{:?}", e.to),
+            })?;
 
         Ok(order)
     }
@@ -173,10 +175,12 @@ impl OrderStateManager {
             .get_mut(order_id)
             .ok_or_else(|| ExecutionError::OrderNotFound(order_id.to_string()))?;
 
-        order.fill(fill_size, now_ns).map_err(|e| ExecutionError::InvalidStateTransition {
-            from: format!("{:?}", e.from),
-            to: format!("{:?}", e.to),
-        })?;
+        order
+            .fill(fill_size, now_ns)
+            .map_err(|e| ExecutionError::InvalidStateTransition {
+                from: format!("{:?}", e.from),
+                to: format!("{:?}", e.to),
+            })?;
 
         // Update self-trade guard
         self.self_trade_guard.update_order(order, now_ns);
@@ -202,10 +206,12 @@ impl OrderStateManager {
             });
         }
 
-        order.request_cancel(now_ns).map_err(|e| ExecutionError::InvalidStateTransition {
-            from: format!("{:?}", e.from),
-            to: format!("{:?}", e.to),
-        })?;
+        order
+            .request_cancel(now_ns)
+            .map_err(|e| ExecutionError::InvalidStateTransition {
+                from: format!("{:?}", e.from),
+                to: format!("{:?}", e.to),
+            })?;
 
         // Update self-trade guard
         self.self_trade_guard.update_order(order, now_ns);
@@ -224,10 +230,12 @@ impl OrderStateManager {
             .get_mut(order_id)
             .ok_or_else(|| ExecutionError::OrderNotFound(order_id.to_string()))?;
 
-        order.confirm_cancel(now_ns).map_err(|e| ExecutionError::InvalidStateTransition {
-            from: format!("{:?}", e.from),
-            to: format!("{:?}", e.to),
-        })?;
+        order
+            .confirm_cancel(now_ns)
+            .map_err(|e| ExecutionError::InvalidStateTransition {
+                from: format!("{:?}", e.from),
+                to: format!("{:?}", e.to),
+            })?;
 
         // Update self-trade guard
         self.self_trade_guard.update_order(order, now_ns);
@@ -239,11 +247,7 @@ impl OrderStateManager {
     ///
     /// If we want to place an order that would cross with our own,
     /// this method identifies which orders to cancel first.
-    pub fn orders_to_cancel_before_cross(
-        &self,
-        side: Side,
-        tick: Tick,
-    ) -> Vec<OrderId> {
+    pub fn orders_to_cancel_before_cross(&self, side: Side, tick: Tick) -> Vec<OrderId> {
         let mut to_cancel = Vec::new();
 
         // Find our orders that would be crossed
@@ -301,7 +305,11 @@ impl OrderStateManager {
     /// Count pending orders by side.
     fn count_pending_orders(&self, side: Side) -> usize {
         self.pending_new.values().filter(|o| o.side == side).count()
-            + self.orders_by_id.values().filter(|o| o.state == OrderState::PendingNew && o.side == side).count()
+            + self
+                .orders_by_id
+                .values()
+                .filter(|o| o.state == OrderState::PendingNew && o.side == side)
+                .count()
     }
 
     /// Check for timed out cancel requests.
@@ -323,8 +331,7 @@ impl OrderStateManager {
         // Remove very old terminal orders (> 1 hour)
         let one_hour_ns = 3_600_000_000_000;
         self.orders_by_id.retain(|_, order| {
-            !order.state.is_terminal()
-                || now_ns.saturating_sub(order.updated_at_ns) < one_hour_ns
+            !order.state.is_terminal() || now_ns.saturating_sub(order.updated_at_ns) < one_hour_ns
         });
     }
 }
@@ -489,7 +496,8 @@ mod tests {
         let client_id = order.client_order_id.clone();
 
         // Ack the order
-        mgr.on_order_ack(&client_id, "exchange-1".into(), 2000).unwrap();
+        mgr.on_order_ack(&client_id, "exchange-1".into(), 2000)
+            .unwrap();
 
         // Can retrieve by client ID
         let order = mgr.get_order_by_client_id(&client_id);

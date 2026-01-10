@@ -8,10 +8,12 @@
 
 pub mod fill_sim;
 pub mod paper_book;
-pub mod replay;
 pub mod recorded_backtest;
+pub mod replay;
 
-pub use fill_sim::{FillSimulator, FillSimConfig, SimulatedFill};
+pub use fill_sim::{FillSimConfig, FillSimulator, SimulatedFill};
 pub use paper_book::PaperBook;
+pub use recorded_backtest::{
+    load_snapshots, run_backtest, BacktestConfig, BacktestReport, RecordedSnapshot,
+};
 pub use replay::ReplayEngine;
-pub use recorded_backtest::{BacktestConfig, BacktestReport, RecordedSnapshot, load_snapshots, run_backtest};

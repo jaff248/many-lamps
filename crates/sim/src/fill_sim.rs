@@ -142,8 +142,10 @@ impl FillSimulator {
     pub fn cancel_order(&mut self, order_id: &str, now_ns: u64) {
         // Check if order is live
         if self.live_orders.contains_key(order_id) {
-            self.pending_cancels
-                .insert(order_id.to_string(), now_ns + self.config.cancel_ack_latency_ns);
+            self.pending_cancels.insert(
+                order_id.to_string(),
+                now_ns + self.config.cancel_ack_latency_ns,
+            );
         }
     }
 
@@ -299,8 +301,7 @@ impl FillSimulator {
         }
 
         // Calculate fill size
-        let max_fill_from_trade =
-            (remaining_trade as f64 * config.max_partial_fill_ratio) as Size;
+        let max_fill_from_trade = (remaining_trade as f64 * config.max_partial_fill_ratio) as Size;
         let fill_size = order.order.remaining_size.min(max_fill_from_trade).max(1);
 
         // Update order
@@ -332,8 +333,7 @@ impl FillSimulator {
 
         let min_tick = price_tick.min(10000 - price_tick) as u128;
         let fee =
-            (config.fee_rate_bps as u128 * min_tick * size as u128)
-                / (10_000u128 * 10_000u128);
+            (config.fee_rate_bps as u128 * min_tick * size as u128) / (10_000u128 * 10_000u128);
 
         fee as i64
     }

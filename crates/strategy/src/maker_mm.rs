@@ -32,7 +32,7 @@ impl Default for MakerMMConfig {
     fn default() -> Self {
         Self {
             half_spread_ticks: 1,
-            order_size: 1_000_000, // 1 share
+            order_size: 1_000_000,   // 1 share
             max_position: 5_000_000, // 5 shares max position
             skew_factor: 0.3,
             min_edge_ticks: 1,
@@ -327,8 +327,30 @@ mod tests {
         let actions = strategy.on_update(&ctx);
 
         // Should have at least bid and ask orders
-        let buys = actions.iter().filter(|a| matches!(a, StrategyAction::PlaceOrder { side: Side::Buy, .. })).count();
-        let sells = actions.iter().filter(|a| matches!(a, StrategyAction::PlaceOrder { side: Side::Sell, .. })).count();
+        let buys = actions
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a,
+                    StrategyAction::PlaceOrder {
+                        side: Side::Buy,
+                        ..
+                    }
+                )
+            })
+            .count();
+        let sells = actions
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a,
+                    StrategyAction::PlaceOrder {
+                        side: Side::Sell,
+                        ..
+                    }
+                )
+            })
+            .count();
 
         assert!(buys > 0);
         assert!(sells > 0);
@@ -336,11 +358,14 @@ mod tests {
 
     #[test]
     fn test_skew_with_position() {
-        let strategy = MakerMMStrategy::new("test".to_string(), MakerMMConfig {
-            max_position: 1_000_000,
-            skew_factor: 0.5,
-            ..Default::default()
-        });
+        let strategy = MakerMMStrategy::new(
+            "test".to_string(),
+            MakerMMConfig {
+                max_position: 1_000_000,
+                skew_factor: 0.5,
+                ..Default::default()
+            },
+        );
 
         // Long position should skew quotes lower (to sell more)
         let skew_long = strategy.calculate_skew(500_000);

@@ -308,7 +308,10 @@ pub fn load_config(path: &str) -> Result<Config> {
     let path = Path::new(path);
 
     if !path.exists() {
-        tracing::warn!("Config file not found at {}, using defaults", path.display());
+        tracing::warn!(
+            "Config file not found at {}, using defaults",
+            path.display()
+        );
         return Ok(Config::default());
     }
 

@@ -11,17 +11,17 @@
 //! - Non-atomic execution (partial fill risk)
 //! - Dry-run mode for paper trading
 
-use std::error::Error;
 use chrono::{DateTime, Utc};
 use mtrader_core::Size;
+use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 // Re-export from research crate for convenience
+pub use mtrader_research::fetch_active_markets;
 pub use mtrader_research::Market;
 pub use mtrader_research::MarketToken;
-pub use mtrader_research::fetch_active_markets;
 
 /// Arbitrage opportunity detected
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub struct RebalancingArbOpportunity {
     pub yes_price: f64,
     pub no_price: f64,
     pub price_sum: f64,
-    pub deviation_from_one: f64,  // |sum - 1|
+    pub deviation_from_one: f64, // |sum - 1|
     pub arb_type: ArbType,
     pub profit_per_dollar: f64,
     pub estimated_profit_usd: f64,
@@ -40,8 +40,8 @@ pub struct RebalancingArbOpportunity {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArbType {
-    Long,   // YES + NO < $1, buy both
-    Short,  // YES + NO > $1, sell both
+    Long,  // YES + NO < $1, buy both
+    Short, // YES + NO > $1, sell both
 }
 
 /// Configuration for rebalancing arbitrage
@@ -62,11 +62,11 @@ pub struct RebalancingArbConfig {
 impl Default for RebalancingArbConfig {
     fn default() -> Self {
         Self {
-            trigger_threshold: 0.02,      // 2% deviation
-            min_profit_per_dollar: 0.01,  // 1% minimum profit
-            max_position_usd: 100.0,      // Conservative sizing
-            slippage_tolerance: 0.005,    // 0.5% slippage
-            dry_run: true,                // Paper trading by default
+            trigger_threshold: 0.02,     // 2% deviation
+            min_profit_per_dollar: 0.01, // 1% minimum profit
+            max_position_usd: 100.0,     // Conservative sizing
+            slippage_tolerance: 0.005,   // 0.5% slippage
+            dry_run: true,               // Paper trading by default
         }
     }
 }
@@ -130,11 +130,15 @@ impl RebalancingArbStrategy {
             return None;
         }
 
-        let yes_price = market.tokens.iter()
+        let yes_price = market
+            .tokens
+            .iter()
             .find(|t| t.outcome.to_lowercase() == "yes")
             .map(|t| t.price)?;
 
-        let no_price = market.tokens.iter()
+        let no_price = market
+            .tokens
+            .iter()
             .find(|t| t.outcome.to_lowercase() == "no")
             .map(|t| t.price)?;
 
@@ -193,10 +197,20 @@ impl RebalancingArbStrategy {
             // Simulate execution
             info!("[DRY RUN] Rebalancing arbitrage opportunity detected:");
             info!("  Market: {}", opportunity.market_slug);
-            info!("  YES price: {:.4}, NO price: {:.4}", opportunity.yes_price, opportunity.no_price);
-            info!("  Sum: {:.4}, Deviation: {:.2}%", opportunity.price_sum, opportunity.deviation_from_one * 100.0);
+            info!(
+                "  YES price: {:.4}, NO price: {:.4}",
+                opportunity.yes_price, opportunity.no_price
+            );
+            info!(
+                "  Sum: {:.4}, Deviation: {:.2}%",
+                opportunity.price_sum,
+                opportunity.deviation_from_one * 100.0
+            );
             info!("  Type: {:?}", opportunity.arb_type);
-            info!("  Estimated profit: ${:.2}", opportunity.estimated_profit_usd);
+            info!(
+                "  Estimated profit: ${:.2}",
+                opportunity.estimated_profit_usd
+            );
 
             let yes_size = (config.max_position_usd * opportunity.yes_price * 1_000_000.0) as u64;
             let no_size = (config.max_position_usd * opportunity.no_price * 1_000_000.0) as u64;
@@ -294,22 +308,27 @@ pub struct ArbSummary {
 impl std::fmt::Display for ArbSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "=== Rebalancing Arbitrage Summary ===\n")?;
-        write!(f, "Total opportunities detected: {}\n", self.total_opportunities)?;
+        write!(
+            f,
+            "Total opportunities detected: {}\n",
+            self.total_opportunities
+        )?;
         write!(f, "Total executed trades: {}\n", self.total_executed)?;
         write!(f, "Total profit: ${:.2}\n", self.total_profit_usd)?;
         write!(f, "  - Long arbitrage: ${:.2}\n", self.long_profit_usd)?;
         write!(f, "  - Short arbitrage: ${:.2}\n", self.short_profit_usd)?;
-        write!(f, "Avg profit per trade: ${:.2}\n", self.avg_profit_per_trade)?;
+        write!(
+            f,
+            "Avg profit per trade: ${:.2}\n",
+            self.avg_profit_per_trade
+        )?;
         write!(f, "Last check: {}\n", self.last_check)?;
         Ok(())
     }
 }
 
 /// Run arbitrage scanner loop
-pub async fn run_arb_scanner(
-    strategy: &RebalancingArbStrategy,
-    interval_secs: u64,
-) {
+pub async fn run_arb_scanner(strategy: &RebalancingArbStrategy, interval_secs: u64) {
     let interval = tokio::time::Duration::from_secs(interval_secs);
 
     loop {
@@ -351,8 +370,18 @@ mod tests {
             active: true,
             closed: false,
             tokens: vec![
-                MarketToken { token_id: "1".to_string(), outcome: "Yes".to_string(), price: yes_price, winner: false },
-                MarketToken { token_id: "2".to_string(), outcome: "No".to_string(), price: no_price, winner: false },
+                MarketToken {
+                    token_id: "1".to_string(),
+                    outcome: "Yes".to_string(),
+                    price: yes_price,
+                    winner: false,
+                },
+                MarketToken {
+                    token_id: "2".to_string(),
+                    outcome: "No".to_string(),
+                    price: no_price,
+                    winner: false,
+                },
             ],
             minimum_order_size: "15".to_string(),
             minimum_tick_size: "0.01".to_string(),
@@ -365,7 +394,9 @@ mod tests {
         // YES=0.55, NO=0.40, sum=0.95 < 1.0 → Long arbitrage
         let market = create_test_market(0.55, 0.40);
         let strategy = RebalancingArbStrategy::new(None);
-        let opp = tokio::runtime::Runtime::new().unwrap().block_on(strategy.check_market_arb(&market));
+        let opp = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(strategy.check_market_arb(&market));
 
         assert!(opp.is_some());
         let opp = opp.unwrap();
@@ -379,7 +410,9 @@ mod tests {
         // YES=0.60, NO=0.45, sum=1.05 > 1.0 → Short arbitrage
         let market = create_test_market(0.60, 0.45);
         let strategy = RebalancingArbStrategy::new(None);
-        let opp = tokio::runtime::Runtime::new().unwrap().block_on(strategy.check_market_arb(&market));
+        let opp = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(strategy.check_market_arb(&market));
 
         assert!(opp.is_some());
         let opp = opp.unwrap();
@@ -392,7 +425,9 @@ mod tests {
         // YES=0.50, NO=0.50, sum=1.0 → No arbitrage
         let market = create_test_market(0.50, 0.50);
         let strategy = RebalancingArbStrategy::new(None);
-        let opp = tokio::runtime::Runtime::new().unwrap().block_on(strategy.check_market_arb(&market));
+        let opp = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(strategy.check_market_arb(&market));
 
         assert!(opp.is_none());
     }
@@ -402,7 +437,9 @@ mod tests {
         // YES=0.51, NO=0.48, sum=0.99 < 1.0 but deviation = 1% < 2% threshold
         let market = create_test_market(0.51, 0.48);
         let strategy = RebalancingArbStrategy::new(None);
-        let opp = tokio::runtime::Runtime::new().unwrap().block_on(strategy.check_market_arb(&market));
+        let opp = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(strategy.check_market_arb(&market));
 
         assert!(opp.is_none());
     }

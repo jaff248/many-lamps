@@ -6,14 +6,14 @@
 //! - Message parsing with raw frame recording
 //! - Connection management with reconnection logic
 
+pub mod error;
 pub mod messages;
 pub mod parser;
-pub mod ws_client;
 pub mod rest_client;
-pub mod error;
+pub mod ws_client;
 
+pub use error::GatewayError;
 pub use messages::*;
 pub use parser::*;
-pub use ws_client::*;
 pub use rest_client::*;
-pub use error::GatewayError;
+pub use ws_client::*;

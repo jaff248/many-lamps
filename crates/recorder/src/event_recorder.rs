@@ -69,7 +69,10 @@ impl EventRecorder {
     }
 
     /// Record multiple events.
-    pub fn record_batch(&mut self, events: impl IntoIterator<Item = CoreEvent>) -> Result<(), RecorderError> {
+    pub fn record_batch(
+        &mut self,
+        events: impl IntoIterator<Item = CoreEvent>,
+    ) -> Result<(), RecorderError> {
         for event in events {
             self.record(event)?;
         }

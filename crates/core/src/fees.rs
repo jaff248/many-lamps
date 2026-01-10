@@ -13,7 +13,7 @@
 //! - price=0.75: 2.50
 //! - price=0.90: 1.00
 
-use crate::types::{Size, Tick, Side, SIZE_DECIMALS};
+use crate::types::{SIZE_DECIMALS, Side, Size, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Fee model for Polymarket markets
@@ -147,16 +147,11 @@ impl FeeModel {
 
     /// Calculate expected value for bundle arb (buying both YES and NO)
     /// Returns (raw_edge_bps, total_fee, net_edge) all in micro-units
-    pub fn bundle_arb_ev(
-        &self,
-        ask_yes_tick: Tick,
-        ask_no_tick: Tick,
-        size: Size,
-    ) -> BundleArbEv {
+    pub fn bundle_arb_ev(&self, ask_yes_tick: Tick, ask_no_tick: Tick, size: Size) -> BundleArbEv {
         // Raw edge: 1 - ask_yes - ask_no (in ticks, then convert)
         let sum_asks = ask_yes_tick as i32 + ask_no_tick as i32;
         let raw_edge_ticks = 10000i32 - sum_asks;
-        
+
         // Convert to bps (ticks are already in 10000 scale, so same as bps)
         let raw_edge_bps = raw_edge_ticks as i16;
 
@@ -251,8 +246,18 @@ impl RebateLedger {
     }
 
     /// Record a maker fill
-    pub fn record_maker_fill(&mut self, market_id: &str, token_id: &str, strategy_id: &str, size: Size) {
-        let key = (market_id.to_string(), token_id.to_string(), strategy_id.to_string());
+    pub fn record_maker_fill(
+        &mut self,
+        market_id: &str,
+        token_id: &str,
+        strategy_id: &str,
+        size: Size,
+    ) {
+        let key = (
+            market_id.to_string(),
+            token_id.to_string(),
+            strategy_id.to_string(),
+        );
         *self.maker_volume.entry(key).or_default() += size;
     }
 
@@ -340,12 +345,24 @@ mod tests {
     fn test_fee_symmetry() {
         let model = FeeModel::btc_15min();
         let size = 100_000_000u64;
-        
+
         // Fee should be symmetric around 0.50
-        assert_eq!(model.calculate_fee(1000, size), model.calculate_fee(9000, size));
-        assert_eq!(model.calculate_fee(2000, size), model.calculate_fee(8000, size));
-        assert_eq!(model.calculate_fee(3000, size), model.calculate_fee(7000, size));
-        assert_eq!(model.calculate_fee(4000, size), model.calculate_fee(6000, size));
+        assert_eq!(
+            model.calculate_fee(1000, size),
+            model.calculate_fee(9000, size)
+        );
+        assert_eq!(
+            model.calculate_fee(2000, size),
+            model.calculate_fee(8000, size)
+        );
+        assert_eq!(
+            model.calculate_fee(3000, size),
+            model.calculate_fee(7000, size)
+        );
+        assert_eq!(
+            model.calculate_fee(4000, size),
+            model.calculate_fee(6000, size)
+        );
     }
 
     #[test]
@@ -376,7 +393,7 @@ mod tests {
         let model = FeeModel::btc_15min();
         // ask_yes = 0.45, ask_no = 0.45 → sum = 0.90 → raw edge = 0.10 (1000 bps)
         let ev = model.bundle_arb_ev(4500, 4500, 100_000_000);
-        
+
         assert_eq!(ev.raw_edge_bps, 1000);
         assert!(ev.is_profitable());
         assert!(ev.net_edge_bps > 0);
@@ -387,7 +404,7 @@ mod tests {
         let model = FeeModel::btc_15min();
         // ask_yes = 0.49, ask_no = 0.49 → sum = 0.98 → raw edge = 0.02 (200 bps)
         let ev = model.bundle_arb_ev(4900, 4900, 100_000_000);
-        
+
         assert_eq!(ev.raw_edge_bps, 200);
         // Fees at 0.49: 1000 bps × 0.49 × size = 0.049 × size per leg
         // Total fees ≈ 0.098 × size
@@ -401,7 +418,7 @@ mod tests {
         let model = FeeModel::btc_15min();
         // ask_yes = 0.50, ask_no = 0.50 → sum = 1.00 → raw edge = 0
         let ev = model.bundle_arb_ev(5000, 5000, 100_000_000);
-        
+
         assert_eq!(ev.raw_edge_bps, 0);
         assert!(!ev.is_profitable());
     }
@@ -411,7 +428,7 @@ mod tests {
         let model = FeeModel::btc_15min();
         // ask_yes = 0.55, ask_no = 0.50 → sum = 1.05 → raw edge = -0.05 (-500 bps)
         let ev = model.bundle_arb_ev(5500, 5000, 100_000_000);
-        
+
         assert_eq!(ev.raw_edge_bps, -500);
         assert!(!ev.is_profitable());
     }
@@ -419,16 +436,16 @@ mod tests {
     #[test]
     fn test_rebate_ledger() {
         let mut ledger = RebateLedger::new();
-        
+
         ledger.record_maker_fill("market1", "token1", "strategy_a", 100_000_000);
         ledger.record_maker_fill("market1", "token1", "strategy_b", 200_000_000);
-        
+
         assert_eq!(ledger.strategy_volume("strategy_a"), 100_000_000);
         assert_eq!(ledger.strategy_volume("strategy_b"), 200_000_000);
-        
+
         // Record payout of 3_000_000 micro
         ledger.record_payout("2026-01-06", 3_000_000);
-        
+
         // strategy_a gets 1/3, strategy_b gets 2/3
         assert_eq!(ledger.strategy_rebates("strategy_a"), 1_000_000);
         assert_eq!(ledger.strategy_rebates("strategy_b"), 2_000_000);
@@ -439,7 +456,7 @@ mod tests {
     fn test_fee_table_verification() {
         let model = FeeModel::btc_15min();
         let size = 100_000_000u64; // 100 shares
-        
+
         // These are the expected values based on the min(price, 1-price) formula
         // fee = 1000 bps × min(price, 1-price) × 100
         struct TestPoint {
@@ -449,11 +466,31 @@ mod tests {
         }
 
         let test_points = [
-            TestPoint { price_tick: 1000, expected_fee_usdc: 1.0, tolerance: 0.01 },
-            TestPoint { price_tick: 2500, expected_fee_usdc: 2.5, tolerance: 0.01 },
-            TestPoint { price_tick: 5000, expected_fee_usdc: 5.0, tolerance: 0.01 },
-            TestPoint { price_tick: 7500, expected_fee_usdc: 2.5, tolerance: 0.01 },
-            TestPoint { price_tick: 9000, expected_fee_usdc: 1.0, tolerance: 0.01 },
+            TestPoint {
+                price_tick: 1000,
+                expected_fee_usdc: 1.0,
+                tolerance: 0.01,
+            },
+            TestPoint {
+                price_tick: 2500,
+                expected_fee_usdc: 2.5,
+                tolerance: 0.01,
+            },
+            TestPoint {
+                price_tick: 5000,
+                expected_fee_usdc: 5.0,
+                tolerance: 0.01,
+            },
+            TestPoint {
+                price_tick: 7500,
+                expected_fee_usdc: 2.5,
+                tolerance: 0.01,
+            },
+            TestPoint {
+                price_tick: 9000,
+                expected_fee_usdc: 1.0,
+                tolerance: 0.01,
+            },
         ];
 
         for tp in test_points {

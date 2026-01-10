@@ -134,10 +134,7 @@ pub fn load_snapshots(path: &Path) -> Result<Vec<RecordedSnapshot>, anyhow::Erro
     Ok(snapshots)
 }
 
-pub fn run_backtest(
-    snapshots: &[RecordedSnapshot],
-    config: &BacktestConfig,
-) -> BacktestReport {
+pub fn run_backtest(snapshots: &[RecordedSnapshot], config: &BacktestConfig) -> BacktestReport {
     let mut balance = config.starting_balance_micro;
     let mut history = History::default();
     let mut leg1: Option<Leg1State> = None;
@@ -211,10 +208,7 @@ pub fn run_backtest(
             continue;
         }
 
-        for (side, ask_tick) in [
-            (HedgeSide::Up, up_ask),
-            (HedgeSide::Down, down_ask),
-        ] {
+        for (side, ask_tick) in [(HedgeSide::Up, up_ask), (HedgeSide::Down, down_ask)] {
             let Some(max_tick) = history.max_tick(side) else {
                 continue;
             };

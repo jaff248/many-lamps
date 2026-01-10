@@ -94,15 +94,15 @@ mod tests {
     fn test_monotonic_clock_units() {
         let clock = MonotonicClock::new();
         thread::sleep(Duration::from_millis(10));
-        
+
         let ns = clock.now_ns();
         let us = clock.now_us();
         let ms = clock.now_ms();
-        
+
         // Should be roughly consistent (with some tolerance for timing)
         assert!(ns >= 10_000_000); // At least 10ms in ns
-        assert!(us >= 10_000);     // At least 10ms in us
-        assert!(ms >= 10);         // At least 10ms
+        assert!(us >= 10_000); // At least 10ms in us
+        assert!(ms >= 10); // At least 10ms
     }
 
     #[test]
