@@ -229,6 +229,7 @@ impl Strategy for UnaffectedArbStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use mtrader_risk::PnLSnapshot;
 
     #[test]
@@ -269,6 +270,7 @@ mod tests {
             spread_ticks: None,
             our_bids: vec![],
             our_asks: vec![],
+            market_snapshots: HashMap::new(),
         };
 
         assert!(strategy.on_update(&ctx).is_empty());

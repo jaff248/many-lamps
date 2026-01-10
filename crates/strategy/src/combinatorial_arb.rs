@@ -17,8 +17,8 @@
 //! 2. Monitors prices of dependent condition pairs.
 //! 3. Executes spread trades when logical invariants are violated.
 
-use crate::{Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{Side, Size};
+use crate::{MarketSnapshot, MarketTokenKey, Strategy, StrategyAction, StrategyContext};
+use mtrader_core::{Side, Size, Tick, SIZE_DECIMALS};
 use mtrader_execution::{OrderKind, OrderType};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -112,8 +112,8 @@ impl CombinatorialArbStrategy {
                     dep.source_token_id, dep.target_token_id, profit_bps
                 );
 
+                let size_shares = self.size_for_legs(source_price, target_price)?;
                 let mut actions = Vec::new();
-                let size_shares = 10; // Placeholder: Calculate based on max_leg_size_usdc
 
                 // 1. Sell Source (Short)
                 actions.push(StrategyAction::PlaceOrder {
@@ -136,6 +136,43 @@ impl CombinatorialArbStrategy {
         }
         None
     }
+
+    fn size_for_legs(&self, source_price: Decimal, target_price: Decimal) -> Option<Size> {
+        let source_size = self.size_from_price(source_price)?;
+        let target_size = self.size_from_price(target_price)?;
+        let size_shares = source_size.min(target_size);
+        if size_shares == 0 {
+            None
+        } else {
+            Some(size_shares)
+        }
+    }
+
+    fn size_from_price(&self, price: Decimal) -> Option<Size> {
+        if price <= dec!(0) {
+            return None;
+        }
+
+        let size_shares = (self.config.max_leg_size_usdc / price) * Decimal::from(SIZE_DECIMALS);
+        size_shares.to_u64()
+    }
+
+    fn snapshot_price(snapshot: &MarketSnapshot) -> Option<Decimal> {
+        if let Some(mid_tick) = snapshot.mid_tick {
+            return Some(Self::tick_to_decimal(mid_tick));
+        }
+
+        match (snapshot.best_bid, snapshot.best_ask) {
+            (Some(bid), Some(ask)) => Some(Self::tick_to_decimal((bid + ask) / 2)),
+            (Some(bid), None) => Some(Self::tick_to_decimal(bid)),
+            (None, Some(ask)) => Some(Self::tick_to_decimal(ask)),
+            (None, None) => None,
+        }
+    }
+
+    fn tick_to_decimal(tick: Tick) -> Decimal {
+        Decimal::from(tick) / dec!(10000)
+    }
 }
 
 impl Strategy for CombinatorialArbStrategy {
@@ -152,18 +189,62 @@ impl Strategy for CombinatorialArbStrategy {
 
         // Iterate over all dependencies
         for dep in &self.dependency_map {
-            // For now, we assume the context contains data for the current market being processed.
-            // In a real multi-market strategy, `ctx` needs to provide access to ALL markets.
-            // This is a limitation of the current `StrategyContext` which is per-market.
-            // TODO: Refactor StrategyContext to support multi-market view.
-            
-            // Placeholder logic assuming ctx has prices we need (which it currently doesn't fully support)
-            let source_price = dec!(0.60); // Mock
-            let target_price = dec!(0.55); // Mock
+            let source_key = MarketTokenKey {
+                market_id: dep.source_market_id.clone(),
+                token_id: dep.source_token_id.clone(),
+            };
+            let target_key = MarketTokenKey {
+                market_id: dep.target_market_id.clone(),
+                token_id: dep.target_token_id.clone(),
+            };
+
+            let source_snapshot = match ctx.market_snapshots.get(&source_key) {
+                Some(snapshot) => snapshot,
+                None => {
+                    warn!(
+                        "Missing source market snapshot for {}/{}",
+                        dep.source_market_id, dep.source_token_id
+                    );
+                    continue;
+                }
+            };
+            let target_snapshot = match ctx.market_snapshots.get(&target_key) {
+                Some(snapshot) => snapshot,
+                None => {
+                    warn!(
+                        "Missing target market snapshot for {}/{}",
+                        dep.target_market_id, dep.target_token_id
+                    );
+                    continue;
+                }
+            };
+
+            let source_price = match Self::snapshot_price(source_snapshot) {
+                Some(price) => price,
+                None => {
+                    warn!(
+                        "No valid source price for {}/{}",
+                        dep.source_market_id, dep.source_token_id
+                    );
+                    continue;
+                }
+            };
+            let target_price = match Self::snapshot_price(target_snapshot) {
+                Some(price) => price,
+                None => {
+                    warn!(
+                        "No valid target price for {}/{}",
+                        dep.target_market_id, dep.target_token_id
+                    );
+                    continue;
+                }
+            };
 
             match dep.relation {
                 DependencyType::Implication => {
-                    if let Some(arb_actions) = self.check_implication_arb(dep, source_price, target_price) {
+                    if let Some(arb_actions) =
+                        self.check_implication_arb(dep, source_price, target_price)
+                    {
                         actions.extend(arb_actions);
                     }
                 }

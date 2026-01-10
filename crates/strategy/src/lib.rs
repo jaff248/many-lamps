@@ -25,5 +25,7 @@ pub use rebalancing_arb::{
     RebalancingArbState, RebalancingArbStrategy,
 };
 pub use signals::{Signal, SignalProcessor};
-pub use traits::{Strategy, StrategyAction, StrategyContext, WorkingOrder};
+pub use traits::{
+    MarketSnapshot, MarketTokenKey, Strategy, StrategyAction, StrategyContext, WorkingOrder,
+};
 pub use unaffected_arb::UnaffectedArbStrategy;
