@@ -311,6 +311,7 @@ impl Strategy for AutoHedgeStrategy {
 mod tests {
     use super::*;
     use mtrader_risk::PnLSnapshot;
+    use std::collections::HashMap;
 
     fn context(asset_id: &str, now_ns: u64, best_ask: Tick) -> StrategyContext {
         StrategyContext {
@@ -336,6 +337,7 @@ mod tests {
             spread_ticks: None,
             our_bids: vec![],
             our_asks: vec![],
+            market_snapshots: HashMap::new(),
         }
     }
 

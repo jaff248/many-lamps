@@ -278,6 +278,7 @@ impl Strategy for MakerMMStrategy {
 mod tests {
     use super::*;
     use mtrader_risk::{PnLSnapshot, Position};
+    use std::collections::HashMap;
 
     fn make_context(mid: Tick, position: i64) -> StrategyContext {
         StrategyContext {
@@ -306,6 +307,7 @@ mod tests {
             spread_ticks: Some(200),
             our_bids: vec![],
             our_asks: vec![],
+            market_snapshots: HashMap::new(),
         }
     }
 

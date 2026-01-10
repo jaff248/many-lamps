@@ -4,6 +4,22 @@ use mtrader_book::ArrayBook;
 use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick};
 use mtrader_execution::{OrderKind, OrderType};
 use mtrader_risk::{PnLSnapshot, Position};
+use std::collections::HashMap;
+
+/// Identifier for a specific market/token pair.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MarketTokenKey {
+    pub market_id: String,
+    pub token_id: String,
+}
+
+/// Minimal snapshot used for multi-market strategies.
+#[derive(Debug, Clone)]
+pub struct MarketSnapshot {
+    pub best_bid: Option<Tick>,
+    pub best_ask: Option<Tick>,
+    pub mid_tick: Option<Tick>,
+}
 
 /// Context provided to strategies for decision making.
 #[derive(Debug, Clone)]
@@ -32,6 +48,8 @@ pub struct StrategyContext {
     pub our_bids: Vec<WorkingOrder>,
     /// Our active ask orders
     pub our_asks: Vec<WorkingOrder>,
+    /// Latest snapshots for other markets (keyed by market/token IDs)
+    pub market_snapshots: HashMap<MarketTokenKey, MarketSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +67,7 @@ impl StrategyContext {
         pnl: PnLSnapshot,
         our_bids: Vec<WorkingOrder>,
         our_asks: Vec<WorkingOrder>,
+        market_snapshots: HashMap<MarketTokenKey, MarketSnapshot>,
         now_ns: u64,
     ) -> Self {
         let best_bid = book.best_bid();
@@ -85,6 +104,7 @@ impl StrategyContext {
             spread_ticks,
             our_bids,
             our_asks,
+            market_snapshots,
         }
     }
 

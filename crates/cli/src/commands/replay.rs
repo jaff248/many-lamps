@@ -28,7 +28,7 @@ use mtrader_strategy::{
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::path::Path;
 use tracing::{error, info, warn};
@@ -658,6 +658,7 @@ pub async fn run(
             pnl,
             our_bids,
             our_asks,
+            HashMap::new(),
             now_ns,
         );
 
@@ -811,6 +812,7 @@ fn handle_fills(
             pnl,
             our_bids,
             our_asks,
+            HashMap::new(),
             now_ns,
         );
 

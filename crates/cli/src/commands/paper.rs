@@ -22,7 +22,7 @@ use mtrader_strategy::{
     BundleMakerStrategy, MakerMMStrategy, Strategy, StrategyAction, StrategyContext,
     UnaffectedArbStrategy, WorkingOrder,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use tracing::{error, info, warn};
 
 /// Run paper trading mode.
@@ -217,6 +217,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                     pnl,
                     our_bids.clone(),
                     our_asks.clone(),
+                    HashMap::new(),
                     now_ns,
                 );
 
@@ -356,6 +357,7 @@ fn handle_fills(
             pnl,
             our_bids,
             our_asks,
+            HashMap::new(),
             now_ns,
         );
 
