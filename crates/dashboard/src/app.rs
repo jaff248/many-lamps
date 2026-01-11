@@ -1593,9 +1593,9 @@ impl App {
             KeyCode::Enter => {
                 self.state.replay_paused = !self.state.replay_paused;
                 if self.state.replay_paused {
-                    self.state.set_status("Replay paused");
+                    self.state.set_status("Replay paused.");
                 } else {
-                    self.state.set_status("Replay started");
+                    self.state.set_status("Replay started.");
                 }
             }
             KeyCode::Char('1') => {
