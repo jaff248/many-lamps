@@ -514,7 +514,7 @@ pub async fn run(
     engine.load_events(events);
 
     let mut book = ArrayBook::new(100);
-    let mut paper_book = PaperBook::new(100);
+    let mut paper_book = PaperBook::new(100.0, 100);
     let mut position = Position::new();
     let mut order_manager = OrderStateManager::new(OrderManagerConfig::default());
 
@@ -668,6 +668,7 @@ pub async fn run(
         while let Some(action) = pending_actions.pop_front() {
             match action {
                 StrategyAction::PlaceOrder {
+                    asset_id,
                     side,
                     kind,
                     order_type,
@@ -683,7 +684,7 @@ pub async fn run(
 
                     let order = Order::new(
                         client_order_id.clone(),
-                        "asset".to_string(),
+                        asset_id,
                         side,
                         kind,
                         order_type,
@@ -705,6 +706,7 @@ pub async fn run(
                             price_tick,
                             size: size_shares,
                             timestamp_ns: now_ns,
+                            queue_position: queue_ahead,
                         });
                     }
                 }

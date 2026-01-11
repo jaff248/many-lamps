@@ -190,6 +190,7 @@ impl Strategy for MakerMMStrategy {
                         let size = self.calculate_order_size(Side::Buy, ctx.position.net_size);
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
+                                asset_id: ctx.asset_id.clone(),
                                 side: Side::Buy,
                                 kind: OrderKind::Limit {
                                     price_tick: target_bid,
@@ -232,6 +233,7 @@ impl Strategy for MakerMMStrategy {
                         let size = self.calculate_order_size(Side::Sell, ctx.position.net_size);
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
+                                asset_id: ctx.asset_id.clone(),
                                 side: Side::Sell,
                                 kind: OrderKind::Limit {
                                     price_tick: target_ask,
@@ -328,31 +330,33 @@ mod tests {
         let ctx = make_context(5000, 0);
         let actions = strategy.on_update(&ctx);
 
-        // Should have at least bid and ask orders
-        let buys = actions
-            .iter()
-            .filter(|a| {
-                matches!(
-                    a,
-                    StrategyAction::PlaceOrder {
-                        side: Side::Buy,
-                        ..
-                    }
-                )
-            })
-            .count();
-        let sells = actions
-            .iter()
-            .filter(|a| {
-                matches!(
-                    a,
-                    StrategyAction::PlaceOrder {
-                        side: Side::Sell,
-                        ..
-                    }
-                )
-            })
-            .count();
+                // Should have at least bid and ask orders
+                let buys = actions
+                    .iter()
+                    .filter(|a| {
+                        matches!(
+                            a,
+                            StrategyAction::PlaceOrder {
+                                asset_id: _,
+                                side: Side::Buy,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                let sells = actions
+                    .iter()
+                    .filter(|a| {
+                        matches!(
+                            a,
+                            StrategyAction::PlaceOrder {
+                                asset_id: _,
+                                side: Side::Sell,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
 
         assert!(buys > 0);
         assert!(sells > 0);

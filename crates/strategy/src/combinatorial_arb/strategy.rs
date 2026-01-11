@@ -1,9 +1,11 @@
-use crate::{MarketSnapshot, MarketTokenKey, Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{Side, Size, Tick, SIZE_DECIMALS};
+use crate::{MarketTokenKey, Strategy, StrategyAction, StrategyContext};
+use mtrader_core::{OrderReason, Side, Size, SIZE_DECIMALS};
+use mtrader_execution::{OrderKind, OrderType};
 use tracing::{info, warn};
 
-use super::{Dependency, DependencyType, CombinatorialArbConfig};
 use super::config::DependencyList;
+use super::price;
+use super::{CombinatorialArbConfig, Dependency, DependencyType};
 
 pub struct CombinatorialArbStrategy {
     config: CombinatorialArbConfig,
@@ -32,40 +34,158 @@ impl CombinatorialArbStrategy {
         // Arb opportunity: Price(Source) > Price(Target).
         // Action: Sell Source (overpriced), Buy Target (underpriced).
 
-        if source_price > target_price {
-            let diff = source_price - target_price;
-            let profit_bps = (diff * 10000.0) as u32;
-
-            if profit_bps >= dep.min_profit_bps.max(self.config.min_profit_threshold_bps) {
-                info!(
-                    "Combinatorial Arb (Implication): {} > {} (diff: {} bps)",
-                    dep.source_token_id, dep.target_token_id, profit_bps
-                );
-
-                let size_shares = self.size_for_legs(source_price, target_price)?;
-                let mut actions = Vec::new();
-
-                // 1. Sell Source (Short) - MarketSell for selling shares
-                actions.push(StrategyAction::PlaceOrder {
-                    side: Side::Sell,
-                    kind: mtrader_execution::OrderKind::MarketSell { size_shares },
-                    order_type: mtrader_execution::OrderType::FOK,
-                    reason: mtrader_core::OrderReason::Signal,
-                });
-
-                // 2. Buy Target (Long) - MarketBuy for buying with USDC
-                let usdc_amount = (size_shares as f64 * target_price * SIZE_DECIMALS as f64 / SIZE_DECIMALS as f64) as u64;
-                actions.push(StrategyAction::PlaceOrder {
-                    side: Side::Buy,
-                    kind: mtrader_execution::OrderKind::MarketBuy { usdc_amount },
-                    order_type: mtrader_execution::OrderType::FOK,
-                    reason: mtrader_core::OrderReason::Signal,
-                });
-
-                return Some(actions);
-            }
+        if source_price <= target_price {
+            return None;
         }
-        None
+
+        let diff = source_price - target_price;
+        let profit_bps = (diff * 10000.0) as u32;
+
+        if !self.meets_profit_threshold(dep, profit_bps) {
+            return None;
+        }
+
+        info!(
+            "Combinatorial Arb (Implication): {} > {} (diff: {} bps)",
+            dep.source_token_id, dep.target_token_id, profit_bps
+        );
+
+        let size_shares = self.size_for_legs(source_price, target_price)?;
+        let buy_usdc = self.usdc_for_size(target_price, size_shares)?;
+
+        Some(vec![
+            StrategyAction::PlaceOrder {
+                asset_id: dep.source_market_id.clone(),
+                side: Side::Sell,
+                kind: OrderKind::MarketSell { size_shares },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+            StrategyAction::PlaceOrder {
+                asset_id: dep.target_market_id.clone(),
+                side: Side::Buy,
+                kind: OrderKind::MarketBuy {
+                    usdc_amount: buy_usdc,
+                },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+        ])
+    }
+
+    pub(crate) fn check_mutually_exclusive_arb(
+        &self,
+        dep: &Dependency,
+        source_price: f64,
+        target_price: f64,
+    ) -> Option<Vec<StrategyAction>> {
+        // Mutually exclusive: Price(Source) + Price(Target) <= 1.
+        let sum = source_price + target_price;
+        if sum <= 1.0 {
+            return None;
+        }
+
+        let profit_bps = ((sum - 1.0) * 10000.0) as u32;
+        if !self.meets_profit_threshold(dep, profit_bps) {
+            return None;
+        }
+
+        info!(
+            "Combinatorial Arb (Mutually Exclusive): {} + {} = {:.4} ({} bps)",
+            dep.source_token_id, dep.target_token_id, sum, profit_bps
+        );
+
+        let size_shares = self.size_for_legs(source_price, target_price)?;
+
+        Some(vec![
+            StrategyAction::PlaceOrder {
+                asset_id: dep.source_market_id.clone(),
+                side: Side::Sell,
+                kind: OrderKind::MarketSell { size_shares },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+            StrategyAction::PlaceOrder {
+                asset_id: dep.target_market_id.clone(),
+                side: Side::Sell,
+                kind: OrderKind::MarketSell { size_shares },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+        ])
+    }
+
+    pub(crate) fn check_identical_arb(
+        &self,
+        dep: &Dependency,
+        source_price: f64,
+        target_price: f64,
+    ) -> Option<Vec<StrategyAction>> {
+        let diff = (source_price - target_price).abs();
+        if diff <= 0.0 {
+            return None;
+        }
+
+        let profit_bps = (diff * 10000.0) as u32;
+        if !self.meets_profit_threshold(dep, profit_bps) {
+            return None;
+        }
+
+        let (sell_price, buy_price, sell_label, buy_label, sell_token, buy_token, sell_market_id, buy_market_id) =
+            if source_price > target_price {
+                (
+                    source_price,
+                    target_price,
+                    "source",
+                    "target",
+                    &dep.source_token_id,
+                    &dep.target_token_id,
+                    dep.source_market_id.clone(),
+                    dep.target_market_id.clone(),
+                )
+            } else {
+                (
+                    target_price,
+                    source_price,
+                    "target",
+                    "source",
+                    &dep.target_token_id,
+                    &dep.source_token_id,
+                    dep.target_market_id.clone(),
+                    dep.source_market_id.clone(),
+                )
+            };
+
+        info!(
+            "Combinatorial Arb (Identical): sell {} {} / buy {} {} ({} bps)",
+            sell_label, sell_token, buy_label, buy_token, profit_bps
+        );
+
+        let size_shares = self.size_for_legs(sell_price, buy_price)?;
+        let buy_usdc = self.usdc_for_size(buy_price, size_shares)?;
+
+        Some(vec![
+            StrategyAction::PlaceOrder {
+                asset_id: sell_market_id,
+                side: Side::Sell,
+                kind: OrderKind::MarketSell { size_shares },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+            StrategyAction::PlaceOrder {
+                asset_id: buy_market_id,
+                side: Side::Buy,
+                kind: OrderKind::MarketBuy {
+                    usdc_amount: buy_usdc,
+                },
+                order_type: OrderType::FOK,
+                reason: OrderReason::Signal,
+            },
+        ])
+    }
+
+    fn meets_profit_threshold(&self, dep: &Dependency, profit_bps: u32) -> bool {
+        profit_bps >= dep.min_profit_bps.max(self.config.min_profit_threshold_bps)
     }
 
     fn size_for_legs(&self, source_price: f64, target_price: f64) -> Option<Size> {
@@ -88,21 +208,17 @@ impl CombinatorialArbStrategy {
         Some(size_shares as u64)
     }
 
-    fn snapshot_price(snapshot: &MarketSnapshot) -> Option<f64> {
-        if let Some(mid_tick) = snapshot.mid_tick {
-            return Some(Self::tick_to_price(mid_tick));
+    fn usdc_for_size(&self, price: f64, size_shares: Size) -> Option<u64> {
+        if price <= 0.0 || size_shares == 0 {
+            return None;
         }
-
-        match (snapshot.best_bid, snapshot.best_ask) {
-            (Some(bid), Some(ask)) => Some(Self::tick_to_price((bid + ask) / 2)),
-            (Some(bid), None) => Some(Self::tick_to_price(bid)),
-            (None, Some(ask)) => Some(Self::tick_to_price(ask)),
-            (None, None) => None,
+        let shares = size_shares as f64 / SIZE_DECIMALS as f64;
+        let usdc = (shares * price * SIZE_DECIMALS as f64) as u64;
+        if usdc == 0 {
+            None
+        } else {
+            Some(usdc)
         }
-    }
-
-    fn tick_to_price(tick: Tick) -> f64 {
-        tick as f64 / 10000.0
     }
 }
 
@@ -150,7 +266,7 @@ impl Strategy for CombinatorialArbStrategy {
                 }
             };
 
-            let source_price = match Self::snapshot_price(source_snapshot) {
+            let source_price = match price::snapshot_price(source_snapshot) {
                 Some(price) => price,
                 None => {
                     warn!(
@@ -160,7 +276,7 @@ impl Strategy for CombinatorialArbStrategy {
                     continue;
                 }
             };
-            let target_price = match Self::snapshot_price(target_snapshot) {
+            let target_price = match price::snapshot_price(target_snapshot) {
                 Some(price) => price,
                 None => {
                     warn!(
@@ -179,7 +295,20 @@ impl Strategy for CombinatorialArbStrategy {
                         actions.extend(arb_actions);
                     }
                 }
-                _ => {} // Implement other types
+                DependencyType::MutuallyExclusive => {
+                    if let Some(arb_actions) =
+                        self.check_mutually_exclusive_arb(dep, source_price, target_price)
+                    {
+                        actions.extend(arb_actions);
+                    }
+                }
+                DependencyType::Identical => {
+                    if let Some(arb_actions) =
+                        self.check_identical_arb(dep, source_price, target_price)
+                    {
+                        actions.extend(arb_actions);
+                    }
+                }
             }
         }
 

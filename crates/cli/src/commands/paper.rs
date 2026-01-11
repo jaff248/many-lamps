@@ -39,11 +39,11 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
     let clock = MonotonicClock::new();
     let mut book = ArrayBook::new(100);
-    
+
     // Use PaperBook with initial balance
     let initial_balance = config.risk.max_position as f64 / 100.0; // Default $100
     let mut paper_book = PaperBook::new(initial_balance, 100);
-    
+
     let mut position = Position::new();
 
     let mut order_manager = OrderStateManager::new(OrderManagerConfig::default());
@@ -200,7 +200,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                 let pnl = PnLSnapshot {
                     timestamp_ns: now_ns,
-                    realized_pnl_micro: position.realized_pnl_micro_usdc,
+                    realized_pnl: position.realized_pnl_micro_usdc,
                     unrealized_pnl: 0,
                     total_pnl: current_pnl,
                     total_fees: paper_book.performance.total_fees_micro,
@@ -241,7 +241,13 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                 while let Some(action) = pending_actions.pop_front() {
                     match action {
-                        StrategyAction::PlaceOrder { side, kind, order_type, reason } => {
+                        StrategyAction::PlaceOrder {
+                            asset_id,
+                            side,
+                            kind,
+                            order_type,
+                            reason,
+                        } => {
                             let client_order_id = order_manager.generate_client_id();
                             let queue_ahead = match kind {
                                 OrderKind::Limit { price_tick, .. } => {
@@ -252,7 +258,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                             let order = Order::new(
                                 client_order_id.clone(),
-                                market.to_string(),
+                                asset_id,
                                 side,
                                 kind,
                                 order_type,
@@ -356,13 +362,20 @@ fn handle_fills(
 
         // Record fill in PaperBook
         let fees_micro = fill.fee_micro_usdc as i64;
-        paper_book.on_fill(fill_side, fill.price_tick, fill.size, fees_micro, now_ns, &fill.order_id);
+        paper_book.on_fill(
+            fill_side,
+            fill.price_tick,
+            fill.size,
+            fees_micro,
+            now_ns,
+            &fill.order_id,
+        );
 
         let current_pnl = paper_book.get_pnl_micro();
 
         let pnl = PnLSnapshot {
             timestamp_ns: now_ns,
-            realized_pnl_micro: position.realized_pnl_micro_usdc,
+            realized_pnl: position.realized_pnl_micro_usdc,
             unrealized_pnl: 0,
             total_pnl: current_pnl,
             total_fees: fees_micro,
@@ -413,7 +426,7 @@ fn print_performance_metrics(paper_book: &PaperBook) {
     let report = paper_book.get_performance_report();
     let balance = paper_book.get_balance();
     let pnl = paper_book.get_pnl();
-    
+
     info!(
         "Balance: ${:.2} | PnL: ${:.2} | Trades: {} | Win Rate: {:.1}%",
         balance, pnl, report.total_trades, report.win_rate_pct
@@ -425,7 +438,7 @@ fn print_final_report(paper_book: &PaperBook) {
     let report = paper_book.get_performance_report();
     let balance = paper_book.get_balance();
     let pnl = paper_book.get_pnl();
-    
+
     info!("=== Final Performance Report ===");
     info!("Final Balance: ${:.2}", balance);
     info!("Total PnL: ${:.2}", pnl);
