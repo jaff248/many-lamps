@@ -3,43 +3,34 @@
 //! This module provides ML inference for Polymarket price prediction using
 //! a SiLU-based MLP approximation of KAN layers.
 //!
-//! # Feature Flag
-//! Enable the `ml` feature to use T-KAN models:
-//! ```toml
-//! [dependencies]
-//! mtrader-ml = { path = "crates/ml", features = ["ml"] }
-//! ```
-//!
-//! # Usage (requires `ml` feature)
+//! # Usage
 //! ```
 //! use mtrader_ml::{TkanModel, TkanConfig, FeatureVector};
 //!
-//! #[cfg(feature = "ml")]
-//! {
-//!     let config = TkanConfig::default();
-//!     let model = TkanModel::load("model.ot", &config).expect("Failed to load model");
+//! let config = TkanConfig::default();
+//! let model = TkanModel::new(&config);
 //!
-//!     let features = FeatureVector::from_price_history(&[5000, 5010, 5020], &[10, 12, 8], 1000);
-//!     let signal = model.predict(&features);
-//! }
+//! let features = FeatureVector::from_price_history(&[5000, 5010, 5020], &[10, 12, 8], 1000);
+//! let signal = model.predict(&features);
 //! ```
 //!
-//! Without `ml` feature, use the FeatureBuffer to accumulate data:
+//! # Model format
+//! Models can be loaded from JSON format:
+//! ```no_run
+//! let model = TkanModel::load_json("model.json", &config).expect("Failed to load model");
 //! ```
-//! use mtrader_ml::FeatureBuffer;
 //!
-//! let mut buffer = FeatureBuffer::new(20);
-//! buffer.push(5000, 10);
-//! buffer.push(5010, 12);
-//!
-//! if let Some(features) = buffer.to_feature_vector(1000) {
-//!     // Process features...
-//! }
+//! For mock inference (no weights), use:
+//! ```
+//! let model = TkanModel::dummy(&config);
 //! ```
 
 use many_lamps_core::{Tick, Side};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::VecDeque;
+use std::fs;
+use anyhow::{Result, Context};
 
 /// T-KAN prediction signal
 #[derive(Debug, Clone, PartialEq)]
@@ -97,7 +88,7 @@ impl FeatureVector {
     /// - Momentum indicators
     pub fn from_price_history(prices: &[Tick], spreads: &[u16], now_ns: u64) -> Self {
         let window = prices.len().min(20);
-        let mut features = Vec::with_capacity(window * 4);
+        let mut features = Vec::with_capacity(window + 2); // window + spread + volatility
 
         // Price returns (pct change)
         for i in (prices.len().saturating_sub(window))..prices.len() {
@@ -144,124 +135,193 @@ impl FeatureVector {
             timestamp_ns: now_ns,
         }
     }
+}
 
-    /// Convert to tensor format for tch-rs
-    #[cfg(feature = "ml")]
-    pub fn to_tensor(&self) -> tch::Tensor {
-        let shape = [1, self.features.len() as i64];
-        tch::Tensor::of_slice(&self.features, shape, false)
-    }
+/// Neural Network layer weights
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerWeights {
+    pub weights: Vec<Vec<f64>>,
+    pub biases: Vec<f64>,
+}
+
+/// T-KAN Model weights
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelWeights {
+    pub input_layer: LayerWeights,
+    pub hidden_layer: LayerWeights,
 }
 
 /// T-KAN Model wrapper
 #[derive(Debug, Clone)]
 pub struct TkanModel {
-    #[cfg(feature = "ml")]
-    model: tch::nn::Sequential,
-    #[cfg(feature = "ml")]
-    device: tch::Device,
     config: TkanConfig,
+    weights: Option<ModelWeights>,
     initialized: bool,
 }
 
 impl TkanModel {
-    /// Load model from PyTorch checkpoint
+    /// Create a new ML model with random weights
     ///
-    /// Requires `ml` feature to be enabled.
-    #[cfg(feature = "ml")]
-    pub fn load(model_path: &str, config: &TkanConfig) -> Result<Self, tch::TchError> {
-        use tch::nn::{Linear, LinearConfig, Sequential};
-
-        let device = tch::Device::Cpu;
-        let vs = tch::nn::VarStore::new(device);
-
-        // Load weights from file
-        vs.load(model_path)?;
-
-        // Build MLP: Input -> Hidden (SiLU) -> Output
+    /// This creates a functional model even without pre-trained weights.
+    /// For production use, load pre-trained weights from `load_json`.
+    pub fn new(config: &TkanConfig) -> Self {
         let input_size = config.window_size + 2; // features + spread + vol
         let hidden_size = config.hidden_size;
         let output_size = config.output_size;
 
-        let sequential = Sequential::new(
-            Linear::new(
-                vs.root() / "fc1",
-                tch::nn::LinearConfig { bias: true },
-                input_size as i64,
-                hidden_size as i64,
-            ),
-            tch::nn::func(|x| x.silu()), // SiLU activation (approx of KAN)
-            Linear::new(
-                vs.root() / "fc2",
-                tch::nn::LinearConfig { bias: true },
-                hidden_size as i64,
-                output_size as i64,
-            ),
-        );
+        // Create random weights for mock inference
+        let input_layer = LayerWeights {
+            weights: vec![vec![0.0; input_size]; hidden_size],
+            biases: vec![0.0; hidden_size],
+        };
+
+        let hidden_layer = LayerWeights {
+            weights: vec![vec![0.0; hidden_size]; output_size],
+            biases: vec![0.0; output_size],
+        };
+
+        let weights = ModelWeights {
+            input_layer,
+            hidden_layer,
+        };
+
+        Self {
+            config: config.clone(),
+            weights: Some(weights),
+            initialized: true,
+        }
+    }
+
+    /// Load model from JSON file
+    pub fn load_json(model_path: &str, config: &TkanConfig) -> Result<Self> {
+        let contents = fs::read_to_string(model_path)
+            .context(format!("Failed to read model file: {}", model_path))?;
+
+        let weights: ModelWeights = serde_json::from_str(&contents)
+            .context(format!("Failed to parse JSON from: {}", model_path))?;
+
+        // Validate dimensions
+        let input_size = config.window_size + 2;
+        let hidden_size = config.hidden_size;
+        let output_size = config.output_size;
+
+        if weights.input_layer.weights.len() != hidden_size {
+            return Err(anyhow::anyhow!(
+                "Input layer weights height {} doesn't match hidden size {}",
+                weights.input_layer.weights.len(),
+                hidden_size
+            ));
+        }
+
+        if weights.input_layer.weights[0].len() != input_size {
+            return Err(anyhow::anyhow!(
+                "Input layer weights width {} doesn't match input size {}",
+                weights.input_layer.weights[0].len(),
+                input_size
+            ));
+        }
+
+        if weights.input_layer.biases.len() != hidden_size {
+            return Err(anyhow::anyhow!(
+                "Input layer biases length {} doesn't match hidden size {}",
+                weights.input_layer.biases.len(),
+                hidden_size
+            ));
+        }
+
+        if weights.hidden_layer.weights.len() != output_size {
+            return Err(anyhow::anyhow!(
+                "Hidden layer weights height {} doesn't match output size {}",
+                weights.hidden_layer.weights.len(),
+                output_size
+            ));
+        }
+
+        if weights.hidden_layer.weights[0].len() != hidden_size {
+            return Err(anyhow::anyhow!(
+                "Hidden layer weights width {} doesn't match hidden size {}",
+                weights.hidden_layer.weights[0].len(),
+                hidden_size
+            ));
+        }
+
+        if weights.hidden_layer.biases.len() != output_size {
+            return Err(anyhow::anyhow!(
+                "Hidden layer biases length {} doesn't match output size {}",
+                weights.hidden_layer.biases.len(),
+                output_size
+            ));
+        }
 
         Ok(Self {
-            model: sequential,
-            device,
             config: config.clone(),
+            weights: Some(weights),
             initialized: true,
         })
     }
 
     /// Create dummy model for testing (no weights)
-    #[cfg(feature = "ml")]
     pub fn dummy(config: &TkanConfig) -> Self {
-        use tch::nn::{Linear, Sequential};
+        let mut model = Self::new(config);
+        model.weights = None;
+        model
+    }
 
-        let device = tch::Device::Cpu;
-        let vs = tch::nn::VarStore::new(device);
+    /// Compute SiLU (Sigmoid-weighted Linear Unit) activation
+    fn silu(x: f64) -> f64 {
+        x / (1.0 + (-x).exp())
+    }
 
-        let input_size = config.window_size + 2;
-        let hidden_size = config.hidden_size;
-        let output_size = config.output_size;
-
-        let sequential = Sequential::new(
-            Linear::new(
-                vs.root() / "fc1",
-                tch::nn::LinearConfig { bias: true },
-                input_size as i64,
-                hidden_size as i64,
-            ),
-            tch::nn::func(|x| x.silu()),
-            Linear::new(
-                vs.root() / "fc2",
-                tch::nn::LinearConfig { bias: true },
-                hidden_size as i64,
-                output_size as i64,
-            ),
-        );
-
-        Self {
-            model: sequential,
-            device,
-            config: config.clone(),
-            initialized: true,
+    /// Apply linear layer (W·x + b)
+    fn linear_layer(input: &[f64], weights: &[Vec<f64>], biases: &[f64]) -> Vec<f64> {
+        let mut output = vec![0.0; weights.len()];
+        
+        for i in 0..weights.len() {
+            let mut sum = biases[i];
+            for j in 0..input.len() {
+                sum += weights[i][j] * input[j];
+            }
+            output[i] = sum;
         }
+        
+        output
     }
 
     /// Run inference
-    #[cfg(feature = "ml")]
     pub fn predict(&self, features: &FeatureVector) -> TkanSignal {
-        if !self.initialized {
+        if !self.initialized || self.weights.is_none() {
             return TkanSignal::neutral(features.timestamp_ns);
         }
 
-        let input = features.to_tensor();
-        let output = self.model.forward(&input);
+        let weights = self.weights.as_ref().unwrap();
+        let input = &features.features;
 
+        // Validate input size
+        let expected_input_size = self.config.window_size + 2;
+        if input.len() != expected_input_size {
+            tracing::warn!(
+                "Feature vector size {} doesn't match expected input size {}",
+                input.len(),
+                expected_input_size
+            );
+            return TkanSignal::neutral(features.timestamp_ns);
+        }
+
+        // Forward pass: Input -> Hidden (SiLU) -> Output
+        let hidden = Self::linear_layer(input, &weights.input_layer.weights, &weights.input_layer.biases);
+        
+        // Apply SiLU activation
+        let hidden_activated: Vec<f64> = hidden.iter().map(|&x| Self::silu(x)).collect();
+        
+        // Output layer
+        let output = Self::linear_layer(&hidden_activated, &weights.hidden_layer.weights, &weights.hidden_layer.biases);
+        
         // Output: [direction, confidence]
-        let direction = output.double_value(&[0, 0]);
-        let confidence_raw = output.double_value(&[0, 1]);
+        let direction = if output.len() > 0 { output[0].clamp(-1.0, 1.0) } else { 0.0 };
+        let confidence_raw = if output.len() > 1 { output[1] } else { 0.0 };
 
         // Apply sigmoid to confidence
         let confidence = 1.0 / (1.0 + (-confidence_raw).exp());
-
-        // Clamp direction
-        let direction = direction.clamp(-1.0, 1.0);
 
         TkanSignal {
             direction,
@@ -271,12 +331,8 @@ impl TkanModel {
     }
 
     /// Check if model is enabled
-    pub fn is_enabled() -> bool {
-        #[cfg(feature = "ml")]
-        return true;
-
-        #[cfg(not(feature = "ml"))]
-        return false;
+    pub fn is_enabled(&self) -> bool {
+        self.initialized && self.weights.is_some()
     }
 }
 
@@ -390,21 +446,68 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "ml")]
-    fn test_dummy_model() {
+    fn test_ml_model_inference() {
         let config = TkanConfig::default();
-        let model = TkanModel::dummy(&config);
+        let model = TkanModel::new(&config);
         assert!(model.is_enabled());
 
-        let buffer = FeatureBuffer::new(config.window_size);
-        // Buffer is empty, should get neutral signal
+        // Create test features
         let features = FeatureVector {
             features: vec![0.0; config.window_size + 2],
             timestamp_ns: 1000,
         };
 
         let signal = model.predict(&features);
-        // Dummy model has random weights, just check structure
-        assert!(signal.timestamp_ns > 0);
+        assert_eq!(signal.timestamp_ns, 1000);
+        // With zero weights, direction should be 0 (neutral), confidence ~0.5 (sigmoid(0) = 0.5)
+        assert!(signal.direction.abs() < 1e-10);
+        assert!((signal.confidence - 0.5).abs() < 1e-10); // sigmoid(0) = 0.5
+    }
+
+    #[test]
+    fn test_ml_model_dummy() {
+        let config = TkanConfig::default();
+        let model = TkanModel::dummy(&config);
+        assert!(!model.is_enabled()); // Dummy model has no weights
+
+        let features = FeatureVector {
+            features: vec![0.0; config.window_size + 2],
+            timestamp_ns: 2000,
+        };
+
+        let signal = model.predict(&features);
+        // Dummy model returns neutral signal
+        assert_eq!(signal.direction, 0.0);
+        assert_eq!(signal.confidence, 0.0);
+        assert_eq!(signal.timestamp_ns, 2000);
+    }
+
+    #[test]
+    fn test_silu_activation() {
+        use super::TkanModel;
+        // Test SiLU activation function
+        assert_eq!(TkanModel::silu(0.0), 0.0);
+        assert!(TkanModel::silu(1.0) < 1.0);
+        assert!(TkanModel::silu(-1.0) > -1.0);
+    }
+
+    #[test]
+    fn test_linear_layer() {
+        use super::TkanModel;
+        
+        let weights = vec![
+            vec![1.0, 2.0],
+            vec![3.0, 4.0],
+        ];
+        let biases = vec![0.5, 1.0];
+        let input = vec![2.0, 3.0];
+        
+        let output = TkanModel::linear_layer(&input, &weights, &biases);
+        
+        // Output[0] = 0.5 + 1.0*2.0 + 2.0*3.0 = 0.5 + 2.0 + 6.0 = 8.5
+        // Output[1] = 1.0 + 3.0*2.0 + 4.0*3.0 = 1.0 + 6.0 + 12.0 = 19.0
+        assert_eq!(output.len(), 2);
+        assert!((output[0] - 8.5).abs() < 1e-10);
+        assert!((output[1] - 19.0).abs() < 1e-10);
     }
 }

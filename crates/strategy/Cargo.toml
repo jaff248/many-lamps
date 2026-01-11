@@ -10,6 +10,7 @@ mtrader-book = { package = "many-lamps-book", path = "../book" }
 mtrader-execution = { path = "../execution" }
 mtrader-risk = { path = "../risk" }
 mtrader-research = { path = "../research" }
+mtrader-ml = { path = "../ml", features = ["ml"] }
 
 # Async runtime
 tokio = { workspace = true }

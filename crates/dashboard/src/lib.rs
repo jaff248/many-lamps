@@ -1,6 +1,5 @@
 //! MTrader TUI - Full-screen interactive trading interface
 
-use anyhow::Result;
 use chrono::Local;
 use many_lamps_book::ArrayBook;
 use mtrader_risk::{PnLSnapshot, Position};
@@ -13,7 +12,7 @@ use ratatui::{
     Terminal,
 };
 use std::{
-    io::{self, Stdout},
+    io,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -344,7 +343,7 @@ impl DashboardController {
                         terminal
                             .draw(|f| {
                                 let widget = DashboardWidget::new(new_state);
-                                f.render_widget(&widget, f.size());
+                                f.render_widget(&widget, f.area());
                             })
                             .ok();
                     }

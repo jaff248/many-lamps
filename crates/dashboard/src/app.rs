@@ -9,7 +9,19 @@ use crossterm::{
     event::{self, Event, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+use many_lamps_core::fees::MarketFeeProfile;
 use mtrader_sim::{load_snapshots, run_backtest, BacktestConfig as SimBacktestConfig};
+use mtrader_strategy::traits::{Strategy, StrategyAction, StrategyContext};
+use mtrader_strategy::bundle_maker::BundleMakerConfig;
+use mtrader_strategy::bundle_maker::BundleMakerStrategy;
+use mtrader_strategy::maker_mm::MakerMMConfig;
+use mtrader_strategy::maker_mm::MakerMMStrategy;
+use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
+use mtrader_strategy::unaffected_arb::UnaffectedArbStrategy;
+use mtrader_strategy::auto_hedge::{AutoHedgeConfig, AutoHedgeStrategy};
+use mtrader_strategy::combinatorial_arb::{CombinatorialArbConfig, CombinatorialArbStrategy};
+use mtrader_strategy::ml_strategy::MlStrategy;
+use mtrader_strategy::ml_strategy::MlStrategyConfig;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -18,10 +30,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
     Terminal,
 };
-use std::{
-    io::{self, Stdout},
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
+use std::{io::{self, Stdout}, time::{Duration, Instant}};
 
 const VERSION: &str = "2.0.0";
 
@@ -39,6 +49,17 @@ pub const DEFAULT_MARKETS: &[(&str, &str, f64, f64)] = &[
     ("link-updown-15m", "LINK Up/Down 15min", 0.5100, 52000.0),
     ("ada-updown-15m", "ADA Up/Down 15min", 0.4920, 28000.0),
     ("dot-updown-15m", "DOT Up/Down 15min", 0.4880, 35000.0),
+];
+
+/// All available strategies for selection
+pub const AVAILABLE_STRATEGIES: &[&str] = &[
+    "maker_mm",
+    "bundle_maker",
+    "unaffected_arb",
+    "rebalancing_arb",
+    "auto_hedge",
+    "combinatorial_arb",
+    "ml",
 ];
 
 /// Trading mode (paper or live)
@@ -59,6 +80,30 @@ pub enum AutoTradingState {
     Halted(String),
 }
 
+/// Strategy signal for display
+#[derive(Clone, Debug)]
+pub struct StrategySignal {
+    pub timestamp: String,
+    pub signal_type: String,
+    pub details: String,
+    pub side: Option<String>,
+    pub size: Option<i64>,
+    pub price: Option<f64>,
+}
+
+impl Default for StrategySignal {
+    fn default() -> Self {
+        Self {
+            timestamp: String::new(),
+            signal_type: "No Signal".to_string(),
+            details: "Waiting for market data...".to_string(),
+            side: None,
+            size: None,
+            price: None,
+        }
+    }
+}
+
 /// Menu navigation
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum MenuItem {
@@ -70,6 +115,7 @@ pub enum MenuItem {
     Replay,
     MarketBrowser,
     LiveTrading,
+    Strategies,
     StrategySettings,
     RiskSettings,
     Help,
@@ -202,7 +248,57 @@ impl Default for StrategyParams {
 }
 
 /// Application state
-#[derive(Clone, Debug)]
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("current_menu", &self.current_menu)
+            .field("selected_index", &self.selected_index)
+            .field("input_mode", &self.input_mode)
+            .field("text_input", &self.text_input)
+            .field("edit_field", &self.edit_field)
+            .field("trading_mode", &self.trading_mode)
+            .field("auto_trading", &self.auto_trading)
+            .field("market", &self.market)
+            .field("markets_list", &self.markets_list)
+            .field("selected_market", &self.selected_market)
+            .field("market_search", &self.market_search)
+            .field("strategy_name", &self.strategy_name)
+            .field("strategy_params", &self.strategy_params)
+            .field("active_strategy", &"<Box<dyn Strategy>>")
+            .field("risk_config", &self.risk_config)
+            .field("circuit_breaker_tripped", &self.circuit_breaker_tripped)
+            .field("circuit_breaker_reason", &self.circuit_breaker_reason)
+            .field("consecutive_losses", &self.consecutive_losses)
+            .field("position", &self.position)
+            .field("realized_pnl", &self.realized_pnl)
+            .field("unrealized_pnl", &self.unrealized_pnl)
+            .field("total_fees", &self.total_fees)
+            .field("trades_count", &self.trades_count)
+            .field("daily_trades", &self.daily_trades)
+            .field("best_bid", &self.best_bid)
+            .field("best_ask", &self.best_ask)
+            .field("active_bids", &self.active_bids)
+            .field("active_asks", &self.active_asks)
+            .field("is_recording", &self.is_recording)
+            .field("recording_start", &self.recording_start)
+            .field("recording_events", &self.recording_events)
+            .field("backtest_dir", &self.backtest_dir)
+            .field("backtest_balance", &self.backtest_balance)
+            .field("backtest_results", &self.backtest_results)
+            .field("replay_files", &self.replay_files)
+            .field("selected_replay", &self.selected_replay)
+            .field("replay_speed", &self.replay_speed)
+            .field("replay_paused", &self.replay_paused)
+            .field("replay_progress", &self.replay_progress)
+            .field("wallet_address", &self.wallet_address)
+            .field("risk_limit", &self.risk_limit)
+            .field("status_message", &self.status_message)
+            .field("last_action_time", &self.last_action_time)
+            .field("activity_log", &self.activity_log)
+            .finish()
+    }
+}
+
 pub struct AppState {
     // Navigation
     pub current_menu: MenuItem,
@@ -224,6 +320,9 @@ pub struct AppState {
     // Strategy
     pub strategy_name: String,
     pub strategy_params: StrategyParams,
+    pub active_strategy: Option<Box<dyn Strategy>>,
+    pub strategy_signals: Vec<StrategySignal>,
+    pub selected_strategy_index: usize,
 
     // Risk
     pub risk_config: RiskConfig,
@@ -304,6 +403,9 @@ impl AppState {
             market_search: String::new(),
             strategy_name: "maker_mm".to_string(),
             strategy_params: StrategyParams::default(),
+            active_strategy: None,
+            strategy_signals: Vec::new(),
+            selected_strategy_index: 0,
             risk_config: RiskConfig::default(),
             circuit_breaker_tripped: false,
             circuit_breaker_reason: String::new(),
@@ -347,6 +449,161 @@ impl AppState {
         }
     }
 
+    /// Create a strategy instance based on strategy name
+    pub fn create_strategy(&mut self) -> Result<(), String> {
+        let market_id = self.market.condition_id.clone();
+        
+        self.active_strategy = match self.strategy_name.as_str() {
+            "maker_mm" => {
+                let config = MakerMMConfig {
+                    half_spread_ticks: self.strategy_params.spread_bps / 10,
+                    order_size: self.strategy_params.order_size * 1_000_000,
+                    max_position: self.risk_config.max_position * 1_000_000,
+                    skew_factor: if self.strategy_params.inventory_skew { 0.3 } else { 0.0 },
+                    ..Default::default()
+                };
+                Some(Box::new(MakerMMStrategy::new(
+                    format!("maker_mm_{}", market_id),
+                    config,
+                )) as Box<dyn Strategy>)
+            }
+            "bundle_maker" => {
+                let config = BundleMakerConfig {
+                    leg_size: self.strategy_params.order_size * 1_000_000,
+                    min_profit_micro_usdc: 100_000,
+                    fee_profile: MarketFeeProfile::crypto_15m(),
+                    ..Default::default()
+                };
+                Some(Box::new(BundleMakerStrategy::new(
+                    format!("bundle_maker_{}", market_id),
+                    config,
+                    format!("{}_yes", market_id),
+                    format!("{}_no", market_id),
+                )) as Box<dyn Strategy>)
+            }
+            "unaffected_arb" => {
+                let config = UnaffectedArbConfig {
+                    leg_size: self.strategy_params.order_size * 1_000_000,
+                    min_profit_micro_usdc: 100_000,
+                    fee_profile: MarketFeeProfile::zero("unaffected"),
+                    ..Default::default()
+                };
+                Some(Box::new(UnaffectedArbStrategy::new(
+                    format!("unaffected_arb_{}", market_id),
+                    config,
+                    format!("{}_yes", market_id),
+                    format!("{}_no", market_id),
+                )) as Box<dyn Strategy>)
+            }
+            "rebalancing_arb" => {
+                // Note: RebalancingArbStrategy uses async API, not the Strategy trait
+                // It's a separate scanning strategy that can be used independently
+                self.set_status("Use API scanner for rebalancing arb (not yet integrated with TUI)");
+                return Err("RebalancingArb requires async API scanner".to_string());
+            }
+            "auto_hedge" => {
+                let config = AutoHedgeConfig {
+                    leg_size: self.strategy_params.order_size * 1_000_000,
+                    sum_target: self.strategy_params.sum_target,
+                    dip_threshold: self.strategy_params.dip_threshold,
+                    window_minutes: self.strategy_params.window_minutes,
+                    ..Default::default()
+                };
+                Some(Box::new(AutoHedgeStrategy::new(
+                    format!("auto_hedge_{}", market_id),
+                    config,
+                    format!("{}_yes", market_id),
+                    format!("{}_no", market_id),
+                )) as Box<dyn Strategy>)
+            }
+            "combinatorial_arb" => {
+                let config = CombinatorialArbConfig {
+                    min_profit_threshold_bps: self.strategy_params.edge_threshold_bps as u32,
+                    ..Default::default()
+                };
+                Some(Box::new(CombinatorialArbStrategy::new(config)) as Box<dyn Strategy>)
+            }
+            "ml" => {
+                let config = MlStrategyConfig {
+                    min_position_change: self.strategy_params.order_size as i64,
+                    ..Default::default()
+                };
+                Some(Box::new(MlStrategy::new(
+                    &format!("ml_{}", market_id),
+                    &market_id,
+                    config,
+                )) as Box<dyn Strategy>)
+            }
+            _ => {
+                // Default to maker_mm
+                let config = MakerMMConfig {
+                    half_spread_ticks: self.strategy_params.spread_bps / 10,
+                    order_size: self.strategy_params.order_size * 1_000_000,
+                    ..Default::default()
+                };
+                Some(Box::new(MakerMMStrategy::new(
+                    format!("maker_mm_{}", market_id),
+                    config,
+                )) as Box<dyn Strategy>)
+            }
+        };
+        
+        self.set_status(&format!("Strategy '{}' initialized", self.strategy_name));
+        Ok(())
+    }
+
+    /// Switch to next strategy in the list
+    pub fn next_strategy(&mut self) {
+        let idx = AVAILABLE_STRATEGIES
+            .iter()
+            .position(|&s| s == self.strategy_name)
+            .unwrap_or(0);
+        self.strategy_name = AVAILABLE_STRATEGIES[(idx + 1) % AVAILABLE_STRATEGIES.len()].to_string();
+        self.set_status(&format!("Strategy: {}", self.strategy_name));
+    }
+
+    /// Build StrategyContext from current app state
+    pub fn build_strategy_context(&self, now_ns: u64) -> StrategyContext {
+        // Convert best_bid/best_ask (prices) to ticks
+        let best_bid_tick = (self.best_bid * 10000.0) as i16;
+        let best_ask_tick = (self.best_ask * 10000.0) as i16;
+        
+        // Calculate mid tick and spread
+        let (mid_tick, spread_ticks) = if best_ask_tick > best_bid_tick {
+            let mid = (best_bid_tick + best_ask_tick) / 2;
+            let spread = best_ask_tick - best_bid_tick;
+            (Some(mid as _), Some(spread as _))
+        } else {
+            (None, None)
+        };
+        
+        StrategyContext {
+            now_ns,
+            asset_id: self.market.condition_id.clone(),
+            position: mtrader_risk::Position::new(),
+            pnl: mtrader_risk::PnLSnapshot {
+                timestamp_ns: now_ns,
+                realized_pnl: self.realized_pnl,
+                unrealized_pnl: self.unrealized_pnl,
+                total_pnl: self.realized_pnl + self.unrealized_pnl,
+                total_fees: self.total_fees,
+                net_pnl: self.realized_pnl + self.unrealized_pnl - self.total_fees,
+                high_water_mark: 0,
+                drawdown: 0,
+                drawdown_bps: 0,
+            },
+            best_bid: if self.best_bid > 0.0 { Some(best_bid_tick as _) } else { None },
+            best_ask: if self.best_ask > 0.0 { Some(best_ask_tick as _) } else { None },
+            best_bid_size: self.active_bids as _,
+            best_ask_size: self.active_asks as _,
+            mid_tick,
+            spread_ticks,
+            our_bids: Vec::new(),
+            our_asks: Vec::new(),
+            market_snapshots: HashMap::new(),
+        }
+    }
+
     pub fn log_trade(&mut self, side: &str, size: i64, price: f64) {
         let ts = Local::now().format("%H:%M:%S.%3f").to_string();
         self.activity_log
@@ -386,6 +643,14 @@ impl AppState {
         self.markets_list.push(market.clone());
         self.set_status(&format!("Added market: {}", condition_id));
     }
+
+    /// Add a strategy signal to the signal list
+    pub fn add_strategy_signal(&mut self, signal: StrategySignal) {
+        self.strategy_signals.insert(0, signal);
+        if self.strategy_signals.len() > 10 {
+            self.strategy_signals.pop();
+        }
+    }
 }
 
 pub struct App {
@@ -410,18 +675,167 @@ impl App {
         self.load_replay_files();
         loop {
             self.terminal
-                .draw(|f| f.render_widget(&TuiApp { state: &self.state }, f.size()))?;
+                .draw(|f| f.render_widget(&TuiApp { state: &self.state }, f.area()))?;
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     self.handle_input(key);
                 }
             }
+            
+            // Strategy execution loop - runs when auto-trading is enabled
+            self.execute_strategy_cycle();
+            
             if self.state.current_menu == MenuItem::Quit {
                 break;
             }
         }
         disable_raw_mode()?;
         Ok(())
+    }
+
+    /// Execute one cycle of strategy logic
+    fn execute_strategy_cycle(&mut self) {
+        if self.state.auto_trading != AutoTradingState::Running {
+            return;
+        }
+        
+        // Initialize strategy if not already done
+        if self.state.active_strategy.is_none() {
+            if let Err(e) = self.state.create_strategy() {
+                self.state.set_status(&format!("Strategy init failed: {}", e));
+                self.state.auto_trading = AutoTradingState::Disabled;
+                return;
+            }
+        }
+        
+        // Build context first (before any borrow of self.state)
+        let now_ns = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos() as u64;
+        let ctx = self.state.build_strategy_context(now_ns);
+        
+        // Activate strategy if not already active
+        let strategy_name = self.state.strategy_name.clone();
+        if let Some(ref mut strategy) = self.state.active_strategy {
+            if !strategy.is_active() {
+                strategy.activate();
+            }
+            
+            // Get actions from strategy
+            let actions = strategy.on_update(&ctx);
+            
+            // Execute each action
+            for action in actions {
+                if let Err(e) = self.execute_strategy_action(action, &ctx) {
+                    self.state.set_status(&format!("Action error: {}", e));
+                }
+            }
+        }
+        // Set status after strategy operations
+        if self.state.auto_trading == AutoTradingState::Running {
+            self.state.set_status(&format!("Strategy '{}' activated", strategy_name));
+        }
+    }
+
+    /// Execute a strategy action and update state
+    fn execute_strategy_action(&mut self, action: StrategyAction, ctx: &StrategyContext) -> Result<(), String> {
+        match action {
+            StrategyAction::PlaceOrder { side, kind, reason, .. } => {
+                // Create signal for display
+                let ts = Local::now().format("%H:%M:%S.%3f").to_string();
+                let size = match kind {
+                    mtrader_execution::OrderKind::Limit { size_shares, .. } => size_shares as i64,
+                    _ => 1_000_000,
+                };
+                let price = ctx.mid_tick.map(|t| t as f64 / 10000.0);
+                
+                let signal = StrategySignal {
+                    timestamp: ts.clone(),
+                    signal_type: format!("{:?}", side),
+                    details: format!("{:?} - {:?}", kind, reason),
+                    side: Some(format!("{:?}", side)),
+                    size: Some(size),
+                    price,
+                };
+                self.state.add_strategy_signal(signal);
+                
+                // Log the order
+                let order_info = format!("ORDER: {:?} {:?} - {:?}", side, kind, reason);
+                self.state.activity_log.insert(0, format!("[{}] {}", ts, order_info));
+                
+                // Simulate fill for paper trading (immediate fill at mid price)
+                if let Some(mid_tick) = ctx.mid_tick {
+                    // Update position
+                    let position_delta = match side {
+                        many_lamps_core::Side::Buy => size,
+                        many_lamps_core::Side::Sell => -size,
+                    };
+                    self.state.position += position_delta;
+                    
+                    // Calculate PnL impact (simplified)
+                    let price_f = mid_tick as f64 / 10000.0;
+                    let pnl_impact = (position_delta as f64 * price_f * 1_000_000.0) as i64;
+                    
+                    self.state.set_status(&format!(
+                        "Filled: {:?} {} @ {:.4} (Pos: {})",
+                        side, size, price_f, self.state.position
+                    ));
+                    
+                    // Simulate fill callback to strategy
+                    if let Some(ref mut strategy) = self.state.active_strategy {
+                        strategy.on_fill(ctx, side, mid_tick, size as _);
+                    }
+                    
+                    self.state.trades_count += 1;
+                    self.state.daily_trades += 1;
+                    
+                    // Add simulated fee
+                    let fee = (size as f64 * price_f * 0.001) as i64; // 10 bps fee estimate
+                    self.state.total_fees += fee;
+                    
+                    // Update realized PnL (simplified)
+                    self.state.realized_pnl += pnl_impact - fee;
+                }
+                Ok(())
+            }
+            
+            StrategyAction::CancelOrder { client_order_id, reason } => {
+                let ts = Local::now().format("%H:%M:%S.%3f").to_string();
+                let signal = StrategySignal {
+                    timestamp: ts.clone(),
+                    signal_type: "CANCEL".to_string(),
+                    details: format!("{:?} - {}", client_order_id, reason),
+                    side: None,
+                    size: None,
+                    price: None,
+                };
+                self.state.add_strategy_signal(signal);
+                
+                self.state.activity_log.insert(0, format!("[{}] CANCEL: {:?} - {}", ts, client_order_id, reason));
+                self.state.set_status(&format!("Cancelled order: {:?}", client_order_id));
+                Ok(())
+            }
+            
+            StrategyAction::AmendOrder { client_order_id, new_kind, reason } => {
+                let ts = Local::now().format("%H:%M:%S.%3f").to_string();
+                let signal = StrategySignal {
+                    timestamp: ts.clone(),
+                    signal_type: "AMEND".to_string(),
+                    details: format!("{:?} -> {:?} - {}", client_order_id, new_kind, reason),
+                    side: None,
+                    size: None,
+                    price: None,
+                };
+                self.state.add_strategy_signal(signal);
+                
+                self.state.activity_log.insert(0, format!("[{}] AMEND: {:?} -> {:?} - {}", ts, client_order_id, new_kind, reason));
+                self.state.set_status(&format!("Amended order: {:?}", client_order_id));
+                Ok(())
+            }
+            
+            StrategyAction::NoOp => {
+                // No action needed
+                Ok(())
+            }
+        }
     }
 
     fn load_replay_files(&mut self) {
@@ -460,6 +874,7 @@ impl App {
             MenuItem::Replay => self.replay(key),
             MenuItem::MarketBrowser => self.browser(key),
             MenuItem::LiveTrading => self.live(key),
+            MenuItem::Strategies => self.strategies(key),
             MenuItem::StrategySettings => self.strategy_settings(key),
             MenuItem::RiskSettings => self.risk_settings(key),
             MenuItem::Help => self.help(key),
@@ -569,14 +984,18 @@ impl App {
                         MenuItem::LiveTrading
                     }
                     6 => {
+                        self.state.set_status("Strategies");
+                        MenuItem::Strategies
+                    }
+                    7 => {
                         self.state.set_status("Strategy Settings");
                         MenuItem::StrategySettings
                     }
-                    7 => {
+                    8 => {
                         self.state.set_status("Risk Settings");
                         MenuItem::RiskSettings
                     }
-                    8 => {
+                    9 => {
                         self.state.set_status("Help");
                         MenuItem::Help
                     }
@@ -614,19 +1033,7 @@ impl App {
                 }
             }
             KeyCode::Char('s') => {
-                let strats = [
-                    "maker_mm",
-                    "bundle_maker",
-                    "unaffected_arb",
-                    "rebalancing_arb",
-                ];
-                let idx = strats
-                    .iter()
-                    .position(|&s| s == self.state.strategy_name)
-                    .unwrap_or(0);
-                self.state.strategy_name = strats[(idx + 1) % strats.len()].to_string();
-                self.state
-                    .set_status(&format!("Strategy: {}", self.state.strategy_name));
+                self.state.next_strategy();
             }
             KeyCode::Char('a') => {
                 // Auto-trading toggle
@@ -634,22 +1041,35 @@ impl App {
                 match self.state.auto_trading {
                     AutoTradingState::Disabled => {
                         self.state.auto_trading = AutoTradingState::Running;
-                        self.state
-                            .set_status("Auto-trading ENABLED. Strategy is now active.");
+                        // Initialize and activate strategy
+                        if let Err(e) = self.state.create_strategy() {
+                            self.state.set_status(&format!("Strategy init failed: {}", e));
+                            self.state.auto_trading = AutoTradingState::Disabled;
+                        } else {
+                            self.state.set_status("Auto-trading ENABLED. Strategy is now active.");
+                        }
                     }
                     AutoTradingState::Running => {
                         self.state.auto_trading = AutoTradingState::Paused;
                         self.state.set_status("Auto-trading paused.");
+                        // Deactivate strategy
+                        if let Some(ref mut strategy) = self.state.active_strategy {
+                            strategy.deactivate();
+                        }
                     }
                     AutoTradingState::Paused => {
                         self.state.auto_trading = AutoTradingState::Running;
                         self.state.set_status("Auto-trading resumed.");
+                        // Reactivate strategy
+                        if let Some(ref mut strategy) = self.state.active_strategy {
+                            strategy.activate();
+                        }
                     }
                     AutoTradingState::Halted(_) => {
                         self.state.auto_trading = AutoTradingState::Disabled;
                         self.state.circuit_breaker_tripped = false;
-                        self.state
-                            .set_status("Auto-trading reset. Circuit breaker cleared.");
+                        self.state.active_strategy = None;
+                        self.state.set_status("Auto-trading reset. Circuit breaker cleared.");
                     }
                 }
                 if was_halted {
@@ -681,6 +1101,7 @@ impl App {
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.state.auto_trading = AutoTradingState::Disabled;
+                self.state.active_strategy = None;
                 self.state.is_recording = false;
                 self.state.set_status("Back to menu.");
                 self.state.current_menu = MenuItem::MainMenu;
@@ -762,49 +1183,6 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('e') => {
-                self.state.input_mode = InputMode::Editing(EditField::BacktestDir);
-                self.state.text_input = self.state.backtest_dir.clone();
-            }
-            KeyCode::Char('s') => {
-                self.state.backtest_balance = match self.state.backtest_balance {
-                    1000.0 => 5000.0,
-                    5000.0 => 10000.0,
-                    _ => 1000.0,
-                };
-                self.state.set_status(&format!(
-                    "Starting balance: ${:.0}",
-                    self.state.backtest_balance
-                ));
-            }
-            KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
-            _ => {}
-        }
-    }
-
-    fn replay(&mut self, key: event::KeyEvent) {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') if self.state.selected_replay > 0 => {
-                self.state.selected_replay -= 1;
-            }
-            KeyCode::Down | KeyCode::Char('j')
-                if self.state.selected_replay < self.state.replay_files.len().saturating_sub(1) =>
-            {
-                self.state.selected_replay += 1;
-            }
-            KeyCode::Enter => {
-                if !self.state.replay_files[0].contains("No recordings") {
-                    self.state.replay_paused = !self.state.replay_paused;
-                    self.state.set_status(if self.state.replay_paused {
-                        "Paused"
-                    } else {
-                        "Playing"
-                    });
-                }
-            }
-            KeyCode::Char('1') => {
-                self.state.replay_speed = 1.0;
-                self.state.set_status("Speed: 1x");
             }
             KeyCode::Char('2') => {
                 self.state.replay_speed = 2.0;
@@ -867,6 +1245,37 @@ impl App {
         }
     }
 
+    fn strategies(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if self.state.selected_strategy_index > 0 => {
+                self.state.selected_strategy_index -= 1;
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.state.selected_strategy_index < AVAILABLE_STRATEGIES.len() - 1 =>
+            {
+                self.state.selected_strategy_index += 1;
+            }
+            KeyCode::Enter => {
+                self.state.strategy_name =
+                    AVAILABLE_STRATEGIES[self.state.selected_strategy_index].to_string();
+                self.state.set_status(&format!(
+                    "Selected strategy: {}",
+                    self.state.strategy_name
+                ));
+            }
+            KeyCode::Char('s') | KeyCode::Right => {
+                self.state.selected_strategy_index = (self.state.selected_strategy_index + 1)
+                    .min(AVAILABLE_STRATEGIES.len() - 1);
+            }
+            KeyCode::Char('w') | KeyCode::Left => {
+                self.state.selected_strategy_index =
+                    self.state.selected_strategy_index.saturating_sub(1);
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
+            _ => {}
+        }
+    }
+
     fn strategy_settings(&mut self, key: event::KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -890,6 +1299,7 @@ impl App {
                     "bundle_maker",
                     "unaffected_arb",
                     "rebalancing_arb",
+                    "ml",
                 ];
                 let idx = strats
                     .iter()
@@ -1061,6 +1471,7 @@ impl<'a> Widget for &TuiApp<'a> {
             MenuItem::Replay => render_replay(self.state, area, buf),
             MenuItem::MarketBrowser => render_market_browser(self.state, area, buf),
             MenuItem::LiveTrading => render_live_trading(self.state, area, buf),
+            MenuItem::Strategies => render_strategies(self.state, area, buf),
             MenuItem::StrategySettings => render_strategy_settings(self.state, area, buf),
             MenuItem::RiskSettings => render_risk_settings(self.state, area, buf),
             MenuItem::Help => render_help(self.state, area, buf),
@@ -1089,6 +1500,7 @@ fn render_main_menu(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buf
         "Replay",
         "Market Browser",
         "Live Trading",
+        "Strategies",
         "Strategy Settings",
         "Risk Settings",
         "Help",
@@ -1145,9 +1557,36 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         .alignment(Alignment::Center)
         .render(chunks[0], buf);
 
-    // Two column layout
-    let mid = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+    // Three column layout for signals
+    let columns = Layout::horizontal([
+        Constraint::Percentage(30),
+        Constraint::Percentage(35),
+        Constraint::Percentage(35),
+    ])
+    .split(chunks[1]);
+
+    // Strategy Signals panel
+    let signals_content = if state.strategy_signals.is_empty() {
+        "Strategy Signals\n\nNo signals yet.\n\nPress [a] to start\nauto-trading.".to_string()
+    } else {
+        let mut content = String::from("Strategy Signals\n\n");
+        for signal in state.strategy_signals.iter().take(5) {
+            let side_mark = signal.side.as_ref()
+                .map(|s| if s.contains("Buy") { "🟢" } else if s.contains("Sell") { "🔴" } else { "⚪" })
+                .unwrap_or("⚪");
+            content.push_str(&format!(
+                "{} [{}] {}\n  {}\n\n",
+                side_mark,
+                signal.timestamp,
+                signal.signal_type,
+                signal.details
+            ));
+        }
+        content
+    };
+    Paragraph::new(signals_content)
+        .block(Block::default().title(" Signals ").borders(Borders::ALL))
+        .render(columns[0], buf);
 
     // Market data panel
     let market_content = format!(
@@ -1156,11 +1595,11 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
     );
     Paragraph::new(market_content)
         .block(Block::default().title(" Market ").borders(Borders::ALL))
-        .render(mid[0], buf);
+        .render(columns[1], buf);
 
-    // Account panel with FIXED position display (persistent, not random)
+    // Account panel
     let drawdown = state.drawdown_bps();
-    let drawdown_color = if drawdown > state.risk_config.max_drawdown_bps as i64 {
+    let _drawdown_color = if drawdown > state.risk_config.max_drawdown_bps as i64 {
         Color::Red
     } else {
         Color::Yellow
@@ -1177,7 +1616,7 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
     );
     Paragraph::new(account_content)
         .block(Block::default().title(" Account ").borders(Borders::ALL))
-        .render(mid[1], buf);
+        .render(columns[2], buf);
 
     // Activity log
     let log: Vec<ListItem> = state
@@ -1507,7 +1946,67 @@ fn render_risk_settings(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         .render(chunks[2], buf);
 }
 
-fn render_help(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+fn render_strategies(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(10),
+        Constraint::Length(3),
+    ])
+    .split(area);
+
+    let strategy_descriptions: HashMap<&str, &str> = HashMap::from([
+        ("maker_mm", "Market making with spread capture"),
+        ("bundle_maker", "Bundle arbitrage for correlated markets"),
+        ("unaffected_arb", "Arbitrage on unaffected assets"),
+        ("rebalancing_arb", "NO/YES price rebalancing arbitrage"),
+        ("auto_hedge", "Automatic hedging for positions"),
+        ("combinatorial_arb", "Multi-market combinatorial arbitrage"),
+        ("ml", "Machine learning based trading"),
+    ]);
+
+    Paragraph::new(" Select Strategy ")
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .alignment(Alignment::Center)
+        .render(chunks[0], buf);
+
+    let mut lines = Vec::new();
+    for (i, &strategy_id) in AVAILABLE_STRATEGIES.iter().enumerate() {
+        let marker = if i == state.selected_strategy_index {
+            "▶"
+        } else {
+            " "
+        };
+        let style = if i == state.selected_strategy_index {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let desc = strategy_descriptions.get(strategy_id).unwrap_or(&"");
+        let active = if strategy_id == state.strategy_name { " [ACTIVE]" } else { "" };
+        lines.push(ListItem::new(Line::from(vec![
+            Span::raw(marker),
+            Span::styled(format!(" {} {}{}", strategy_id, desc, active), style),
+        ])));
+    }
+    List::new(lines)
+        .block(Block::default().title(" Available Strategies ").borders(Borders::ALL))
+        .render(chunks[1], buf);
+
+    let current_desc = strategy_descriptions
+        .get(state.strategy_name.as_str())
+        .unwrap_or(&"");
+    let footer = format!(
+        " [↑/↓/j/k] Select  [Enter] Confirm  [q] Back  | Selected: {}",
+        state.strategy_name
+    );
+    Paragraph::new(footer)
+        .style(Style::default().bg(Color::DarkGray))
+        .render(chunks[2], buf);
+}
+
+fn render_help(_state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer) {
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(10),
