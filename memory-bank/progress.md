@@ -10,12 +10,18 @@
 - ✅ Gateway crate with WebSocket and REST clients
 - ✅ TUI v2.0 builds and runs (fixed bugs)
 
+## New Strategies Implemented (Jan 2026)
+- ✅ **Combinatorial Arb** (`combinatorial_arb.rs`) - Inter-market dependency arbitrage based on arXiv:2508.03474
+- ✅ **Auto-Hedge** (`auto_hedge.rs`) - 15-min UP/DOWN dip-buying with Leg1/Leg2 state machine
+- ✅ **Alpha Signals** (`research/signals.rs`) - Smart money detection, liquidity gap analysis, volume imbalance
+
 ## Bugs Fixed (v2.0)
 - ✅ **Input editing**: Backspace now deletes char, Esc cancels
 - ✅ **Position display**: Shows persistent state, not random values
 - ✅ **Trade button**: Removed auto-increment; [a] toggles auto-trading
 - ✅ **edit_field matching**: Added PartialEq for EditField and ConfirmAction enums
 - ✅ **AutoTradingState**: Removed Copy to allow String in Halted variant
+- ✅ **Combinatorial Arb ctx bug**: Fixed `_ctx` → `ctx` in on_update method
 
 ## Phase 1 Complete: Bug Fixes ✅
 - InputMode::Editing works correctly
@@ -63,6 +69,13 @@
 - **Documentation**: 100% (tui-requirements.md complete)
 - **Core Trading**: 90% (TUI integrated, strategy wiring pending)
 
+## Alpha Research Applied
+- ✅ Combinatorial arb (high alpha) - dependency graph for inter-market arb
+- ✅ Auto-hedge (high alpha) - dip-buying for 15-min markets
+- ✅ Smart money detection (high alpha) - large trade tracking
+- ✅ Signal processing (medium) - EMA, momentum, spread signals
+- ✅ **T-KAN ML Model** (Jan 2026) - `crates/ml/` with tch-rs integration
+
 ## QA Status (Verified)
 - ✅ Dashboard tests: **13/13 passing**
 - ✅ CLI builds: **Successful** (5 warnings, 0 errors)
@@ -94,6 +107,7 @@ test result: ok. 13 passed; 0 failed; 0 ignored
 - Wire actual strategy execution to TUI event loop
 - Connect [c] to real Polymarket WebSocket
 - Add unit tests (100% coverage goal)
+- Implement RiskGuard middleware (centralized risk pipeline)
 
 ## Commands
 ```bash

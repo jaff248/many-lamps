@@ -12,6 +12,7 @@ members = [
     "crates/cli",
     "crates/dashboard",
     "crates/research",
+    "crates/ml",
 ]
 
 [workspace.package]

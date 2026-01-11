@@ -180,7 +180,7 @@ impl Strategy for CombinatorialArbStrategy {
         "combinatorial_arb"
     }
 
-    fn on_update(&mut self, _ctx: &StrategyContext) -> Vec<StrategyAction> {
+    fn on_update(&mut self, ctx: &StrategyContext) -> Vec<StrategyAction> {
         if !self.active {
             return Vec::new();
         }

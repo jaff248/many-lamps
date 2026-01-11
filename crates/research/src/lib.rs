@@ -236,7 +236,8 @@ pub fn identify_no_to_yes_arbitrage(market: &Market) -> Option<ArbitrageOpportun
 
     // If sum of NO prices > YES price, there's potential arbitrage
     let no_sum: f64 = no_prices.iter().sum();
-    let spread_bps = ((1.0 - yes_price) - no_sum) * 10000.0;
+    // Profit = NO_sum - (1 - YES) = NO_sum + YES - 1
+    let spread_bps = (no_sum + yes_price - 1.0) * 10000.0;
 
     if spread_bps > 10.0 {
         // > 0.1% spread
@@ -379,6 +380,8 @@ mod tests {
 
     #[test]
     fn test_arbitrage_detection() {
+        // Multi-outcome market with NO prices summing > YES price
+        // NO prices: 0.4 + 0.3 = 0.7 > YES price 0.5
         let market = Market {
             condition_id: "test".to_string(),
             question_id: "test".to_string(),
@@ -390,19 +393,19 @@ mod tests {
                 MarketToken {
                     token_id: "1".to_string(),
                     outcome: "Yes".to_string(),
-                    price: 0.6,
+                    price: 0.5,  // YES = 0.5
                     winner: false,
                 },
                 MarketToken {
                     token_id: "2".to_string(),
                     outcome: "No".to_string(),
-                    price: 0.4,
+                    price: 0.4,  // First NO = 0.4
                     winner: false,
                 },
                 MarketToken {
                     token_id: "3".to_string(),
-                    outcome: "Maybe".to_string(),
-                    price: 0.3,
+                    outcome: "No".to_string(),
+                    price: 0.3,  // Second NO = 0.3
                     winner: false,
                 },
             ],
@@ -413,6 +416,9 @@ mod tests {
 
         let arb = identify_no_to_yes_arbitrage(&market);
         println!("Arbitrage: {:?}", arb);
+        // NO sum (0.4 + 0.3 = 0.7) > YES (0.5) = 0.2 spread = 2000 bps
         assert!(arb.is_some());
+        let profit = arb.unwrap().estimated_profit_bps;
+        assert!((profit - 2000.0).abs() < 1.0, "Expected ~2000 bps, got {}", profit);
     }
 }

@@ -1,0 +1,27 @@
+[package]
+name = "mtrader-ml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+ml = ["tch"]
+
+[dependencies]
+# Core types
+many-lamps-core = { path = "../core" }
+
+# ML (optional - enabled via feature "ml")
+tch = { version = "0.11", optional = true, default-features = false }
+
+# Serde for model serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Tracing
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3.24"

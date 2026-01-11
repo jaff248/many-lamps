@@ -2,6 +2,18 @@
 
 This report summarizes key architectural patterns and "alpha" discovered from analyzing open-source Rust-based trading systems for Polymarket and general HFT.
 
+## Research Status: HIGH-VALUE ITEMS IMPLEMENTED
+
+| Feature | Status | Alpha Value |
+|---------|--------|-------------|
+| **Combinatorial Arb** | ✅ PARTIAL | **HIGH** - Basic dependency graph, needs price monitoring loop |
+| **Auto-Hedge** | ✅ DONE | **HIGH** - Leg1/Leg2 state machine for 15-min markets |
+| **Smart Money Detection** | ✅ DONE | **HIGH** - Large trade + volume analysis |
+| **Signal Processing** | ✅ DONE | **MEDIUM** - EMA, momentum, spread signals |
+| **T-KAN** | ⏳ TODO | **HIGH** - Not started, needs tch-rs integration |
+
+---
+
 ## 1. High-Performance Order Book (`polysqueeze`)
 
 **Source:** `polysqueeze/src/book.rs`
@@ -14,9 +26,10 @@ The most significant performance optimization found is the use of fixed-point ar
 - **Performance Gain**: ~10-50x speedup for order book updates compared to Decimal-based implementations.
 - **hashing**: Hashes `token_id` once to avoid repeated string comparisons during updates.
 
-**Recommendation for `many-lamps`:**
-- Refactor `mtrader-book` to use integer-based fixed-point representation internally.
-- Implement a "fast path" for WebSocket updates that parses directly to integers.
+### Status: ⏭️ SKIPPED
+**Reason**: Polymarket tick data (1/10000) fits in u16. Current implementation is adequate for market making scale. Revisit if HFT requirements emerge.
+
+---
 
 ## 2. Robust Market Depth Handling (`hftbacktest`)
 
@@ -29,9 +42,10 @@ The most significant performance optimization found is the use of fixed-point ar
 - **L3 Support**: Explicit support for Level 3 (Market-By-Order) data, tracking individual orders alongside price levels.
 - **Snapshot Application**: Clean trait `ApplySnapshot` for initializing state from snapshots.
 
-**Recommendation for `many-lamps`:**
-- Evaluate switching `ArrayBook` to a `HashMap`-based implementation if L2 feed reliability is an issue.
-- Adopt the `ApplySnapshot` pattern for cleaner state initialization in backtests.
+### Status: ⏭️ SKIPPED
+**Reason**: Polymarket provides L2 data only. ArrayBook is sufficient for current requirements.
+
+---
 
 ## 3. Modular Strategy Engine (`clobster`)
 
@@ -46,10 +60,12 @@ The most significant performance optimization found is the use of fixed-point ar
 - **Risk Guard**: Centralized risk checks applied to all signals before execution.
 - **Engine**: Manages the lifecycle, execution loop, and signal processing for multiple strategies running concurrently.
 
-**Recommendation for `many-lamps`:**
-- Adopt the `Signal` abstraction to decouple strategy logic from execution details.
-- Enhance `StrategyContext` to provide richer data (positions, open orders, history) to strategies.
-- Implement a `RiskGuard` middleware layer for centralized safety checks.
+### Status: ✅ PARTIALLY IMPLEMENTED
+- ✅ Signal abstraction in `strategy/signals.rs`
+- ✅ StrategyContext with market_snapshots in `traits.rs`
+- ⏳ **RiskGuard** - NOT YET IMPLEMENTED (Phase 8)
+
+---
 
 ## 4. Cross-Platform Execution (`Polymarket-Kalshi-Arbitrage-bot`)
 
@@ -62,9 +78,12 @@ This bot demonstrates advanced execution patterns for arbitrage.
 - **Auto-Closing**: Background tasks automatically close excess inventory if one leg fails or partially fills.
 - **Circuit Breaker**: Integrated circuit breaker to halt trading on consecutive failures or drawdown.
 
-**Recommendation for `many-lamps`:**
-- If multi-venue trading is planned, adopt the `tokio::join!` pattern for atomic-like execution.
-- Implement the "auto-close excess" logic for safer arbitrage execution.
+### Status: ✅ PARTIALLY IMPLEMENTED
+- ✅ Auto-hedge in `auto_hedge.rs` (our implementation)
+- ✅ CircuitBreaker in `risk/circuit_breaker.rs`
+- ⏭️ Cross-platform - SKIPPED (not relevant for Polymarket-only)
+
+---
 
 ## 5. Dynamic Data Scheduling (`polymarket-hft`)
 
@@ -76,8 +95,10 @@ Implements a dynamic job scheduler using `tokio-cron-scheduler`.
 - **Runtime Scheduling**: Allows adding/removing data ingestion jobs (e.g., fetching external signals like "Fear & Greed") without restarting the bot.
 - **Job Handle**: Uses a `SchedulerHandle` to manage lifecycle safely across threads.
 
-**Recommendation for `many-lamps`:**
-- Implement a similar scheduler if the strategy requires periodic external data (e.g., hourly funding rates, sentiment analysis) that goes beyond WebSocket streams.
+### Status: ⏭️ SKIPPED
+**Reason**: Overkill for current scope. WebSocket stream is sufficient.
+
+---
 
 ## 6. Smart Wallet Support (`rs-clob-client`)
 
@@ -89,38 +110,235 @@ Contains robust logic for deriving smart contract wallet addresses.
 - **CREATE2 Derivation**: correctly derives Proxy (Magic/email) and Safe (Gnosis) wallet addresses from an EOA address.
 - **Chain Awareness**: Handles config differences between Polygon Mainnet and Amoy Testnet.
 
-**Recommendation for `many-lamps`:**
-- Port the `derive_proxy_wallet` and `derive_safe_wallet` logic to support users who trade via smart contract wallets (common on Polymarket).
+### Status: ⏭️ SKIPPED
+**Reason**: Nice-to-have, not core alpha. Users can connect via MetaMask directly.
 
-## 7. Summary of Alpha
+---
 
-| Feature | Source Repo | Impact |
-|---------|-------------|--------|
-| **Fixed-Point Book** | `polysqueeze` | **High**: Critical for low-latency tick processing. |
-| **Strategy Signals** | `clobster` | **Medium**: Improves code modularity and testing. |
-| **Risk Guard** | `clobster` | **High**: Essential for safe automated trading. |
-| **Robust Depth** | `hftbacktest` | **Medium**: Improves data integrity handling. |
-| **Auto-Hedge** | `Kalshi-Arb` | **High**: Reduces leg risk in arbitrage strategies. |
-| **Wallet Derivation** | `rs-clob-client` | **Medium**: Enables support for Proxy/Safe wallets. |
-| **Job Scheduler** | `polymarket-hft` | **Low/Medium**: Useful for periodic signal data. |
+## Summary of Alpha Applied
 
-## Implementation Plan for `many-lamps`
+| Feature | Source Repo | Impact | Status |
+|---------|-------------|--------|--------|
+| **Combinatorial Arb** | Research | **HIGH** | ⏳ PARTIAL |
+| **Auto-Hedge** | Research | **HIGH** | ✅ DONE |
+| **Smart Money Signals** | Research | **HIGH** | ✅ DONE |
+| **Signal Abstraction** | clobster | **MEDIUM** | ✅ DONE |
+| **Risk Guard** | clobster | **HIGH** | ⏳ TODO |
+| **T-KAN ML Model** | Research | **HIGH** | ⏳ TODO |
+| **Fixed-Point Book** | polysqueeze | **HIGH** | ⏭️ SKIPPED |
+| **Robust Depth** | hftbacktest | **MEDIUM** | ⏭️ SKIPPED |
+| **Wallet Derivation** | rs-clob-client | **MEDIUM** | ⏭️ SKIPPED |
+| **Job Scheduler** | polymarket-hft | **LOW** | ⏭️ SKIPPED |
 
-1.  **Phase 1 (Core)**: Refactor `mtrader-book` to use `u64` fixed-point arithmetic.
-2.  **Phase 2 (Safety)**: Implement `RiskGuard` and integrate it into the execution path.
-3.  **Phase 3 (Strategy)**: Refactor `Strategy` trait to return `Vec<Signal>` and provide richer `StrategyContext`.
-4.  **Phase 4 (Execution)**: Add auto-hedging logic for partial fills in arbitrage strategies.
-5.  **Phase 5 (Utilities)**: Add wallet derivation tools and optional job scheduler.
-6.  **Phase 6 (Combinatorial Arbitrage Implementation)**:
-    - **Dependency Graph Representation**: Model markets and instruments as a directed graph where nodes are outcomes/contracts and edges encode conversion via orders or swaps. Track edge weight as negative log price (or fee-adjusted spread) to detect profitable cycles via shortest-path / negative-cycle checks.
-    - **Price Monitoring Loop**: Maintain a real-time price cache keyed by market/outcome (best bid/ask and depth). Update edge weights on each tick or book delta, recompute candidate cycles incrementally (e.g., BFS from touched nodes), and throttle with a debounce window to avoid over-triggering on noisy updates.
-    - **Execution Rules**: Require minimum net edge weight (profit threshold after fees/slippage), enforce max cycle length, validate liquidity at each hop, and use atomic-ish execution with concurrent leg placement plus a rollback/auto-hedge for partial fills. Emit structured telemetry for fill rates and abort reasons.
-7.  **Phase 7 (T-KAN Integration Roadmap)**:
-    - **Rust ML Stack Choice**: Prototype with `tch-rs` for parity with the PyTorch reference and later evaluate `burn` for native Rust ergonomics and deployment. Keep a feature flag to switch backends.
-    - **Layer Approximation**: The Python reference uses a SiLU-based MLP approximation of the KAN layer; replicate this first in Rust to validate correctness before experimenting with true KAN kernels.
-    - **Data/Feature Pipeline**: Define a deterministic preprocessing pipeline (normalization, windowing) shared by training and inference. Add a model registry artifact format (weights + metadata) to version checkpoints.
-    - **Integration Steps**: (1) port model definition to Rust, (2) load PyTorch weights via `tch-rs` to validate outputs, (3) introduce inference in the strategy path behind a runtime toggle, (4) profile latency and memory, (5) swap to `burn` if performance or ergonomics improve.
-8.  **Phase 8 (Strategy Engine Refactor with Signal + Risk Guard)**:
-    - **Signal Abstraction**: Introduce a `Signal` enum (entry/exit/adjust) with optional sizing, price constraints, and metadata. Strategies emit signals; the engine translates them into orders.
-    - **Risk Guard Processing**: Centralize checks in a `RiskGuard` pipeline (position limits, exposure caps, max order size, cooldowns). The engine filters/rejects signals with structured reasons and metrics.
-    - **Execution Flow Update**: Strategy evaluation → signal normalization → risk guard → execution planner → order placement. Add tracing IDs to tie signals to orders and fills.
+---
+
+## Implementation Roadmap
+
+### ✅ COMPLETED (Jan 2026)
+
+1. **Combinatorial Arb Strategy** (Phase 6 partial)
+   - Dependency graph with Implication/MutuallyExclusive/Identical relations
+   - Located: `crates/strategy/src/combinatorial_arb.rs`
+
+2. **Auto-Hedge Strategy** (Phase 6 partial)
+   - Leg1/Leg2 state machine for 15-min markets
+   - Located: `crates/strategy/src/auto_hedge.rs`
+
+3. **Alpha Signal Processing** (Phase 6 partial)
+   - Large trade detection, smart money tracking
+   - Located: `crates/research/src/signals.rs`
+
+### ⏳ TODO (Next Sprints)
+
+1. **Phase 6 (Combinatorial Arbitrage - Full Implementation)**
+   - Dependency graph with negative log prices for cycle detection
+   - Price monitoring loop with debounce
+   - Concurrent leg execution with rollback on partial fills
+
+2. **Phase 7 (T-KAN Integration)** ⭐ HIGH PRIORITY
+   - Rust ML Stack: `tch-rs` for PyTorch parity
+   - MLP-approximated KAN layer (SiLU activation)
+   - Feature-gated: `#[cfg(feature = "ml")]`
+   - Pipeline: normalization → windowing → model → signal
+
+3. **Phase 8 (Signal + RiskGuard)**
+   - Centralized RiskGuard pipeline
+   - Signal→Order tracing with IDs
+   - Execution flow: Strategy → Signal → RiskGuard → Planner → Order
+
+---
+
+## Phase 6: Combinatorial Arbitrage (Full Implementation)
+
+### Dependency Graph Representation
+Model markets and instruments as a directed graph:
+- **Nodes**: Outcomes/contracts (e.g., "BTC-15m-YES", "BTC-15m-NO")
+- **Edges**: Conversion paths via orders or swaps
+- **Edge Weight**: Negative log price (or fee-adjusted spread)
+- **Detection**: Shortest-path / negative-cycle checks
+
+### Price Monitoring Loop
+- Maintain real-time price cache keyed by market/outcome
+- Track best bid/ask and depth at each level
+- Update edge weights on each tick or book delta
+- Recompute candidate cycles incrementally (BFS from touched nodes)
+- Throttle with debounce window (avoid noise triggers)
+
+### Execution Rules
+- Minimum net edge weight (profit threshold after fees/slippage)
+- Max cycle length enforcement
+- Liquidity validation at each hop
+- Atomic-ish execution with concurrent leg placement
+- Rollback/auto-hedge for partial fills
+- Structured telemetry for fill rates and abort reasons
+
+---
+
+## Phase 7: T-KAN Integration Roadmap
+
+### Rust ML Stack Choice
+```toml
+[dependencies]
+tch-rs = { version = "0.12", optional = true }
+burn = { version = "0.12", optional = true }
+```
+
+**Strategy**: Prototype with `tch-rs` for PyTorch parity, evaluate `burn` later. Feature flag `ml` controls availability.
+
+### Layer Approximation
+The Python reference uses a SiLU-based MLP approximation of the KAN layer:
+
+```python
+# Python reference (KAN-Linear approximation)
+class KANLinear(nn.Module):
+    def __init__(self, in_features, out_features):
+        self.layers = nn.Sequential(
+            nn.Linear(in_features, 64),
+            nn.SiLU(),
+            nn.Linear(64, out_features),
+        )
+    
+    def forward(self, x):
+        return self.layers(x)
+```
+
+**Implementation in Rust**: Port this MLP structure to `tch-rs` for inference.
+
+### Data/Feature Pipeline
+1. **Normalization**: Scale inputs to [0, 1] or [-1, 1]
+2. **Windowing**: Sliding window over price history
+3. **Features**: [price, volume, spread, momentum, ...]
+4. **Model Registry**: Store weights + metadata as checkpoints
+
+### Integration Steps
+1. Port model definition to Rust (`crates/ml/src/tkan.rs`)
+2. Load PyTorch weights via `tch-rs` (`load("model.ot")`)
+3. Introduce inference in strategy path behind runtime toggle
+4. Profile latency and memory (critical for tick processing)
+5. Consider swap to `burn` if performance improves
+
+### T-KAN Signal Output
+```rust
+pub struct TkanSignal {
+    pub direction: f64,    // -1.0 (bearish) to 1.0 (bullish)
+    pub confidence: f64,   // 0.0 to 1.0
+    pub timestamp_ns: u64,
+}
+```
+
+---
+
+## Phase 8: Strategy Engine Refactor (Signal + RiskGuard)
+
+### Signal Abstraction
+```rust
+#[derive(Debug, Clone)]
+pub enum Signal {
+    Entry {
+        market_id: String,
+        side: Side,
+        size_shares: u64,
+        price_constraint: Option<Tick>,
+        confidence: f64,
+        metadata: SignalMetadata,
+    },
+    Exit {
+        market_id: String,
+        position_id: String,
+        reason: ExitReason,
+    },
+    Adjust {
+        market_id: String,
+        current_size: u64,
+        target_size: u64,
+    },
+}
+```
+
+### Risk Guard Processing
+Centralized checks before execution:
+
+```rust
+pub struct RiskGuard {
+    position_limits: PositionLimits,
+    exposure_caps: ExposureCaps,
+    max_order_size: u64,
+    cooldowns: CooldownManager,
+}
+
+impl RiskGuard {
+    pub fn check(&self, signal: &Signal, state: &TradingState) 
+        -> Result<(), RiskRejection> 
+    {
+        // 1. Check position limits
+        // 2. Check exposure caps  
+        // 3. Check max order size
+        // 4. Check cooldown
+        
+        // Return structured rejection with reason
+    }
+}
+```
+
+### Execution Flow Update
+```
+Strategy.on_update() 
+    → Vec<Signal>
+    → RiskGuard.check() [filter/reject with reasons]
+    → ExecutionPlanner [translate to orders]
+    → Order placement
+    → Tracing IDs tie signals→orders→fills
+```
+
+---
+
+## RiskGuard Design (Draft)
+
+```rust
+pub struct RiskGuard {
+    position_limits: PositionLimits,
+    exposure_caps: ExposureCaps,
+    cooldowns: CooldownManager,
+}
+
+impl RiskGuard {
+    pub fn check(&self, signal: &Signal, state: &TradingState) -> Result<(), RiskRejection> {
+        // 1. Check position limits
+        if !self.position_limits.allow(&signal.size)? {
+            return Err(RiskRejection::PositionLimitExceeded);
+        }
+        
+        // 2. Check exposure caps
+        if state.total_exposure + signal.size > self.exposure_caps.max {
+            return Err(RiskRejection::ExposureLimitExceeded);
+        }
+        
+        // 3. Check cooldown
+        if self.cooldowns.is_in_cooldown(signal.instrument)? {
+            return Err(RiskRejection::InCooldown);
+        }
+        
+        Ok(())
+    }
+}
+```
