@@ -39,7 +39,11 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
     let clock = MonotonicClock::new();
     let mut book = ArrayBook::new(100);
-    let mut paper_book = PaperBook::new(100);
+    
+    // Use PaperBook with initial balance
+    let initial_balance = config.risk.max_position as f64 / 100.0; // Default $100
+    let mut paper_book = PaperBook::new(initial_balance, 100);
+    
     let mut position = Position::new();
 
     let mut order_manager = OrderStateManager::new(OrderManagerConfig::default());
@@ -127,6 +131,9 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
     info!("Paper trading active - dashboard starting... press Ctrl+C to stop");
 
+    // Track strategy start time for performance reporting
+    let start_time_ns = clock.now_ns().max(0) as u64;
+
     loop {
         tokio::select! {
             Some(frame_result) = frame_rx.recv() => {
@@ -188,13 +195,16 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                     }
                 }
 
+                // Get PnL from PaperBook
+                let current_pnl = paper_book.get_pnl_micro();
+
                 let pnl = PnLSnapshot {
                     timestamp_ns: now_ns,
-                    realized_pnl: position.realized_pnl_micro_usdc,
+                    realized_pnl_micro: position.realized_pnl_micro_usdc,
                     unrealized_pnl: 0,
-                    total_pnl: position.realized_pnl_micro_usdc,
-                    total_fees: 0,
-                    net_pnl: position.realized_pnl_micro_usdc,
+                    total_pnl: current_pnl,
+                    total_fees: paper_book.performance.total_fees_micro,
+                    net_pnl: current_pnl,
                     high_water_mark: 0,
                     drawdown: 0,
                     drawdown_bps: 0,
@@ -209,6 +219,11 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                 dashboard.update_position(&position);
                 dashboard.update_active_orders(our_bids.len(), our_asks.len());
                 dashboard.update_timestamp();
+
+                // Print performance metrics periodically
+                if now_ns % 10_000_000_000 < 100_000_000 {
+                    print_performance_metrics(&paper_book);
+                }
 
                 let context = StrategyContext::from_book(
                     &book,
@@ -255,6 +270,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
                                     price_tick,
                                     size: size_shares,
                                     timestamp_ns: now_ns,
+                                    queue_position: queue_ahead,
                                 });
                             }
                         }
@@ -272,6 +288,8 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
             }
 
             _ = tokio::signal::ctrl_c() => {
+                // Print final performance report
+                print_final_report(&paper_book);
                 break;
             }
         }
@@ -329,19 +347,26 @@ fn handle_fills(
         let fill_side = trade_side.opposite();
         position.on_fill(fill_side, fill.price_tick, fill.size);
 
+        // Update PaperBook
         if let Some(order) = fill_sim.get_order(&fill.order_id) {
             paper_book.update_order_size(&fill.order_id, order.remaining_size);
         } else {
             paper_book.remove_order(&fill.order_id);
         }
 
+        // Record fill in PaperBook
+        let fees_micro = fill.fee_micro_usdc as i64;
+        paper_book.on_fill(fill_side, fill.price_tick, fill.size, fees_micro, now_ns, &fill.order_id);
+
+        let current_pnl = paper_book.get_pnl_micro();
+
         let pnl = PnLSnapshot {
             timestamp_ns: now_ns,
-            realized_pnl: position.realized_pnl_micro_usdc,
+            realized_pnl_micro: position.realized_pnl_micro_usdc,
             unrealized_pnl: 0,
-            total_pnl: position.realized_pnl_micro_usdc,
-            total_fees: 0,
-            net_pnl: position.realized_pnl_micro_usdc,
+            total_pnl: current_pnl,
+            total_fees: fees_micro,
+            net_pnl: current_pnl,
             high_water_mark: 0,
             drawdown: 0,
             drawdown_bps: 0,
@@ -381,4 +406,28 @@ fn collect_working_orders(paper_book: &PaperBook, side: Side) -> Vec<WorkingOrde
         }
     }
     orders
+}
+
+/// Print real-time performance metrics
+fn print_performance_metrics(paper_book: &PaperBook) {
+    let report = paper_book.get_performance_report();
+    let balance = paper_book.get_balance();
+    let pnl = paper_book.get_pnl();
+    
+    info!(
+        "Balance: ${:.2} | PnL: ${:.2} | Trades: {} | Win Rate: {:.1}%",
+        balance, pnl, report.total_trades, report.win_rate_pct
+    );
+}
+
+/// Print final performance report
+fn print_final_report(paper_book: &PaperBook) {
+    let report = paper_book.get_performance_report();
+    let balance = paper_book.get_balance();
+    let pnl = paper_book.get_pnl();
+    
+    info!("=== Final Performance Report ===");
+    info!("Final Balance: ${:.2}", balance);
+    info!("Total PnL: ${:.2}", pnl);
+    info!("{}", report.summary());
 }

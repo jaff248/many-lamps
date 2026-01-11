@@ -12,7 +12,7 @@ pub mod recorded_backtest;
 pub mod replay;
 
 pub use fill_sim::{FillSimConfig, FillSimulator, SimulatedFill};
-pub use paper_book::PaperBook;
+pub use paper_book::{PaperBook, PaperOrder, PerformanceReport, TradeRecord};
 pub use recorded_backtest::{
     load_snapshots, run_backtest, BacktestConfig, BacktestReport, RecordedSnapshot,
 };

@@ -8,6 +8,16 @@ reconnect_attempts = 5
 reconnect_delay_ms = 1000
 request_timeout_ms = 5000
 
+[polymarket]
+# Polymarket gateway configuration
+api_url = "https://api.polymarket.com"
+ws_url = "wss://ws.polymarket.com"
+api_key = "${POLYMARKET_API_KEY}"
+api_secret = "${POLYMARKET_API_SECRET}"
+api_passphrase = "${POLYMARKET_API_PASSPHRASE}"
+rate_limit_rps = 10
+rate_limit_burst = 20
+
 [strategy]
 # Spread in ticks (1 tick = 0.0001, i.e., 1 bp)
 spread_ticks = 2

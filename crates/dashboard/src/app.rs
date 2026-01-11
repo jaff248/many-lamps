@@ -113,6 +113,7 @@ pub enum MenuItem {
     Record,
     Backtest,
     Replay,
+    MarketSelection,
     MarketBrowser,
     LiveTrading,
     Strategies,
@@ -188,6 +189,162 @@ impl Default for Market {
             price: 0.5200,
             volume: 150000.0,
         }
+    }
+}
+
+/// Polymarket API market data
+#[derive(Clone, Debug, Default)]
+pub struct PolymarketMarket {
+    pub condition_id: String,
+    pub question: String,
+    pub slug: String,
+    pub active: bool,
+    pub yes_price: Option<f64>,
+    pub no_price: Option<f64>,
+    pub volume: f64,
+    pub liquidity: f64,
+}
+
+/// Market selection state for the TUI
+#[derive(Clone, Debug, Default)]
+pub struct MarketSelection {
+    pub markets: Vec<PolymarketMarket>,
+    pub filtered_markets: Vec<PolymarketMarket>,
+    pub selected_index: usize,
+    pub search_query: String,
+    pub is_searching: bool,
+    pub is_loading: bool,
+    pub sort_by: MarketSortBy,
+    pub sort_desc: bool,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum MarketSortBy {
+    #[default]
+    Volume,
+    Name,
+    Price,
+    Activity,
+}
+
+impl MarketSelection {
+    pub fn new() -> Self {
+        Self {
+            markets: Vec::new(),
+            filtered_markets: Vec::new(),
+            selected_index: 0,
+            search_query: String::new(),
+            is_searching: false,
+            is_loading: false,
+            sort_by: MarketSortBy::Volume,
+            sort_desc: true,
+            page: 0,
+            page_size: 20,
+        }
+    }
+
+    pub fn filter_and_sort(&mut self) {
+        // Filter by search query
+        if self.search_query.is_empty() {
+            self.filtered_markets = self.markets.clone();
+        } else {
+            let query = self.search_query.to_lowercase();
+            self.filtered_markets = self
+                .markets
+                .iter()
+                .filter(|m| {
+                    m.question.to_lowercase().contains(&query)
+                        || m.slug.to_lowercase().contains(&query)
+                        || m.condition_id.to_lowercase().contains(&query)
+                })
+                .cloned()
+                .collect();
+        }
+
+        // Sort markets
+        match self.sort_by {
+            MarketSortBy::Volume => {
+                self.filtered_markets
+                    .sort_by(|a, b| b.volume.partial_cmp(&a.volume).unwrap_or(std::cmp::Ordering::Equal));
+            }
+            MarketSortBy::Name => {
+                self.filtered_markets
+                    .sort_by(|a, b| a.question.cmp(&b.question));
+            }
+            MarketSortBy::Price => {
+                self.filtered_markets
+                    .sort_by(|a, b| {
+                        let a_price = a.yes_price.unwrap_or(0.5);
+                        let b_price = b.yes_price.unwrap_or(0.5);
+                        b_price.partial_cmp(&a_price).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+            }
+            MarketSortBy::Activity => {
+                // Sort by volume for activity
+                self.filtered_markets
+                    .sort_by(|a, b| b.volume.partial_cmp(&a.volume).unwrap_or(std::cmp::Ordering::Equal));
+            }
+        }
+
+        if self.sort_desc {
+            self.filtered_markets.reverse();
+        }
+
+        // Reset pagination
+        self.page = 0;
+        self.selected_index = 0;
+    }
+
+    pub fn total_pages(&self) -> usize {
+        (self.filtered_markets.len() + self.page_size - 1) / self.page_size
+    }
+
+    pub fn current_page_markets(&self) -> &[PolymarketMarket] {
+        let start = self.page * self.page_size;
+        let end = std::cmp::min(start + self.page_size, self.filtered_markets.len());
+        &self.filtered_markets[start..end]
+    }
+
+    pub fn can_next_page(&self) -> bool {
+        self.page < self.total_pages().saturating_sub(1)
+    }
+
+    pub fn can_prev_page(&self) -> bool {
+        self.page > 0
+    }
+
+    pub fn next_page(&mut self) {
+        if self.can_next_page() {
+            self.page += 1;
+            self.selected_index = 0;
+        }
+    }
+
+    pub fn prev_page(&mut self) {
+        if self.can_prev_page() {
+            self.page -= 1;
+            self.selected_index = 0;
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        let page_count = self.current_page_markets().len();
+        if page_count > 0 {
+            self.selected_index = (self.selected_index + 1).min(page_count - 1);
+        }
+    }
+
+    pub fn select_prev(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+        }
+    }
+
+    pub fn selected_market(&self) -> Option<&PolymarketMarket> {
+        let page_markets = self.current_page_markets();
+        page_markets.get(self.selected_index)
     }
 }
 
@@ -316,6 +473,7 @@ pub struct AppState {
     pub markets_list: Vec<Market>,
     pub selected_market: usize,
     pub market_search: String,
+    pub market_selection: MarketSelection,
 
     // Strategy
     pub strategy_name: String,
@@ -401,6 +559,7 @@ impl AppState {
             markets_list,
             selected_market: 0,
             market_search: String::new(),
+            market_selection: MarketSelection::new(),
             strategy_name: "maker_mm".to_string(),
             strategy_params: StrategyParams::default(),
             active_strategy: None,
@@ -872,6 +1031,7 @@ impl App {
             MenuItem::Record => self.record(key),
             MenuItem::Backtest => self.backtest(key),
             MenuItem::Replay => self.replay(key),
+            MenuItem::MarketSelection => self.market_selection(key),
             MenuItem::MarketBrowser => self.browser(key),
             MenuItem::LiveTrading => self.live(key),
             MenuItem::Strategies => self.strategies(key),
@@ -1106,6 +1266,11 @@ impl App {
                 self.state.set_status("Back to menu.");
                 self.state.current_menu = MenuItem::MainMenu;
             }
+            KeyCode::Char('m') => {
+                // Switch to market selection
+                self.state.current_menu = MenuItem::MarketSelection;
+                self.state.set_status("Select a market...");
+            }
             _ => {}
         }
     }
@@ -1224,6 +1389,67 @@ impl App {
                 }
             }
             KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
+            _ => {}
+        }
+    }
+
+    fn market_selection(&mut self, key: event::KeyEvent) {
+        let ms = &mut self.state.market_selection;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                ms.select_prev();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                ms.select_next();
+            }
+            KeyCode::PageUp => {
+                ms.prev_page();
+            }
+            KeyCode::PageDown => {
+                ms.next_page();
+            }
+            KeyCode::Enter => {
+                if let Some(market) = ms.selected_market() {
+                    // Convert PolymarketMarket to Market and set as current
+                    let price = market.yes_price.unwrap_or(0.5);
+                    self.state.market = Market {
+                        condition_id: market.condition_id.clone(),
+                        name: market.question.clone(),
+                        price,
+                        volume: market.volume,
+                    };
+                    self.state.set_status(&format!("Selected: {}", market.question));
+                    self.state.current_menu = MenuItem::PaperTrading;
+                }
+            }
+            KeyCode::Char('/') => {
+                ms.is_searching = true;
+                self.state.set_status("Search markets...");
+            }
+            KeyCode::Char('r') => {
+                // Refresh markets - in real implementation would call API
+                self.state.set_status("Refreshing markets...");
+                // Would fetch from Polymarket API here
+            }
+            KeyCode::Char('v') => {
+                ms.sort_by = MarketSortBy::Volume;
+                ms.sort_desc = true;
+                ms.filter_and_sort();
+            }
+            KeyCode::Char('n') => {
+                ms.sort_by = MarketSortBy::Name;
+                ms.filter_and_sort();
+            }
+            KeyCode::Char('p') => {
+                ms.sort_by = MarketSortBy::Price;
+                ms.filter_and_sort();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                ms.is_searching = false;
+                ms.search_query.clear();
+                ms.filter_and_sort();
+                self.state.current_menu = MenuItem::MainMenu;
+            }
             _ => {}
         }
     }
@@ -1469,6 +1695,7 @@ impl<'a> Widget for &TuiApp<'a> {
             MenuItem::Record => render_record(self.state, area, buf),
             MenuItem::Backtest => render_backtest(self.state, area, buf),
             MenuItem::Replay => render_replay(self.state, area, buf),
+            MenuItem::MarketSelection => render_market_selection(self.state, area, buf),
             MenuItem::MarketBrowser => render_market_browser(self.state, area, buf),
             MenuItem::LiveTrading => render_live_trading(self.state, area, buf),
             MenuItem::Strategies => render_strategies(self.state, area, buf),
@@ -1605,7 +1832,7 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
         Color::Yellow
     };
     let account_content = format!(
-        "Position & PnL\n\nPosition: {}\nRealized PnL: ${:.2}\nUnrealized: ${:.2}\nFees: ${:.2}\nTrades: {}\nDrawdown: {}bps ({:.2}%)\n\n[c] Connect [a] Auto\n[l] Book [p] Position\n[s] Strategy [r] Record",
+        "Position & PnL\n\nPosition: {}\nRealized PnL: ${:.2}\nUnrealized: ${:.2}\nFees: ${:.2}\nTrades: {}\nDrawdown: {}bps ({:.2}%)\n\n[c] Connect [a] Auto\n[l] Book [p] Position\n[s] Strategy [m] Market\n[r] Record",
         state.position,
         state.realized_pnl as f64 / 1e6,
         state.unrealized_pnl as f64 / 1e6,
@@ -1741,6 +1968,93 @@ fn render_replay(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer
     Paragraph::new(" [↑/↓] Select  [Enter] Play/Pause  [1/2/5] Speed  [q] Back ")
         .style(Style::default().bg(Color::DarkGray))
         .render(chunks[2], buf);
+}
+
+fn render_market_selection(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Min(10),
+        Constraint::Length(1),
+        Constraint::Length(3),
+    ])
+    .split(area);
+
+    let ms = &state.market_selection;
+    let loading = if ms.is_loading {
+        " [Loading...]"
+    } else {
+        ""
+    };
+    Paragraph::new(format!(" Market Selection{} ", loading))
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White))
+        .alignment(Alignment::Center)
+        .render(chunks[0], buf);
+
+    // Search bar
+    let search_prefix = if ms.is_searching { "> " } else { "  " };
+    let search_text = if ms.search_query.is_empty() {
+        format!("{}[type to search...]", search_prefix)
+    } else {
+        format!("{}{}", search_prefix, ms.search_query)
+    };
+    Paragraph::new(search_text)
+        .style(if ms.is_searching {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        })
+        .render(chunks[1], buf);
+
+    // Market list
+    let page_markets = ms.current_page_markets();
+    let items: Vec<ListItem> = page_markets
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let marker = if i == ms.selected_index { "▶" } else { " " };
+            let price_str = match (m.yes_price, m.no_price) {
+                (Some(yes), Some(no)) => format!("Yes: {:.2}% | No: {:.2}%", yes * 100.0, no * 100.0),
+                (Some(yes), None) => format!("Yes: {:.2}%", yes * 100.0),
+                _ => "N/A".to_string(),
+            };
+            let active = if m.active { "✓" } else { "" };
+            ListItem::new(format!(
+                "{} {} | {} | Vol: {:.0} | {}",
+                marker,
+                active,
+                m.question.chars().take(40).collect::<String>(),
+                m.volume,
+                price_str
+            ))
+        })
+        .collect();
+    List::new(items)
+        .block(Block::default().title(" Markets ").borders(Borders::ALL))
+        .render(chunks[2], buf);
+
+    // Pagination info
+    let total_pages = ms.total_pages();
+    let page_info = format!("Page {}/{}", ms.page + 1, total_pages.max(1));
+    Paragraph::new(page_info)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center)
+        .render(chunks[3], buf);
+
+    // Footer with shortcuts
+    let sort_by = match ms.sort_by {
+        MarketSortBy::Volume => "Volume",
+        MarketSortBy::Name => "Name",
+        MarketSortBy::Price => "Price",
+        MarketSortBy::Activity => "Activity",
+    };
+    let footer = format!(
+        " [↑/↓] Select  [Enter] Trade  [/] Search  [r] Refresh  [v/n/p] Sort: {}  [PgUp/Dn] Page  [q] Back ",
+        sort_by
+    );
+    Paragraph::new(footer)
+        .style(Style::default().bg(Color::DarkGray))
+        .render(chunks[4], buf);
 }
 
 fn render_market_browser(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Buffer) {

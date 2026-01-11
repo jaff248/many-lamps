@@ -21,7 +21,7 @@ use std::{
 mod app;
 mod screens;
 
-pub use app::{App, AppState, MenuItem, TuiApp};
+pub use app::{App, AppState, MenuItem, TuiApp, Market, MarketSelection, PolymarketMarket, MarketSortBy, AutoTradingState};
 pub use screens::{BacktestConfig, MarketInfo, StrategyInfo};
 
 pub use self::app::run_tui;

@@ -26,7 +26,7 @@ pub use combinatorial_arb::{
 };
 pub use flow::{FlowSignal, FlowSignalConfig, FlowSnapshot};
 pub use maker_mm::MakerMMStrategy;
-pub use ml_strategy::{MlStrategy, MlStrategyConfig};
+pub use ml_strategy::{MlStrategy, MlStrategyConfig, StrategyPerformance, StrategyStats, TradeOutcome};
 pub use rebalancing_arb::{
     run_arb_scanner, ArbSummary, ArbType, RebalancingArbConfig, RebalancingArbOpportunity,
     RebalancingArbState, RebalancingArbStrategy,
