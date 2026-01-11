@@ -34,6 +34,9 @@ mod tests {
         assert!(actions.is_some());
         let actions = actions.unwrap();
         assert_eq!(actions.len(), 2); // Sell Source, Buy Target
+
+        assert_eq!(actions[0].clone().into_place_order_asset_id().as_deref(), Some("m1"));
+        assert_eq!(actions[1].clone().into_place_order_asset_id().as_deref(), Some("m2"));
     }
 
     #[test]
@@ -57,6 +60,9 @@ mod tests {
         assert!(actions.is_some());
         let actions = actions.unwrap();
         assert_eq!(actions.len(), 2); // Sell both
+
+        assert_eq!(actions[0].clone().into_place_order_asset_id().as_deref(), Some("m1"));
+        assert_eq!(actions[1].clone().into_place_order_asset_id().as_deref(), Some("m2"));
     }
 
     #[test]
@@ -80,6 +86,10 @@ mod tests {
         assert!(actions.is_some());
         let actions = actions.unwrap();
         assert_eq!(actions.len(), 2); // Buy cheap, sell rich
+
+        // source is cheaper (0.48), so we sell target (m2) and buy source (m1)
+        assert_eq!(actions[0].clone().into_place_order_asset_id().as_deref(), Some("m2"));
+        assert_eq!(actions[1].clone().into_place_order_asset_id().as_deref(), Some("m1"));
     }
 
     #[test]
@@ -154,5 +164,21 @@ mod tests {
 
         let actions = strategy.on_update(&ctx);
         assert_eq!(actions.len(), 2);
+
+        assert_eq!(actions[0].clone().into_place_order_asset_id().as_deref(), Some("m1"));
+        assert_eq!(actions[1].clone().into_place_order_asset_id().as_deref(), Some("m2"));
+    }
+
+    trait PlaceOrderAssetId {
+        fn into_place_order_asset_id(self) -> Option<String>;
+    }
+
+    impl PlaceOrderAssetId for crate::StrategyAction {
+        fn into_place_order_asset_id(self) -> Option<String> {
+            match self {
+                crate::StrategyAction::PlaceOrder { asset_id, .. } => Some(asset_id),
+                _ => None,
+            }
+        }
     }
 }

@@ -241,7 +241,13 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                 while let Some(action) = pending_actions.pop_front() {
                     match action {
-                        StrategyAction::PlaceOrder { side, kind, order_type, reason } => {
+                        StrategyAction::PlaceOrder {
+                            asset_id,
+                            side,
+                            kind,
+                            order_type,
+                            reason,
+                        } => {
                             let client_order_id = order_manager.generate_client_id();
                             let queue_ahead = match kind {
                                 OrderKind::Limit { price_tick, .. } => {
@@ -252,7 +258,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
 
                             let order = Order::new(
                                 client_order_id.clone(),
-                                market.to_string(),
+                                asset_id,
                                 side,
                                 kind,
                                 order_type,

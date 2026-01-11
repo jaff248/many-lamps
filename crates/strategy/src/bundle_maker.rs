@@ -151,6 +151,7 @@ impl BundleMakerStrategy {
             let no_bid = no_ask.saturating_sub(1).max(1);
 
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: self.yes_asset_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::Limit {
                     price_tick: yes_bid,
@@ -161,6 +162,7 @@ impl BundleMakerStrategy {
             });
 
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: self.no_asset_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::Limit {
                     price_tick: no_bid,
@@ -172,6 +174,7 @@ impl BundleMakerStrategy {
         } else {
             // Aggressive: take the ask
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: self.yes_asset_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::Limit {
                     price_tick: yes_ask,
@@ -182,6 +185,7 @@ impl BundleMakerStrategy {
             });
 
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: self.no_asset_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::Limit {
                     price_tick: no_ask,

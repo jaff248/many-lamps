@@ -1070,7 +1070,11 @@ impl App {
     ) -> Result<(), String> {
         match action {
             StrategyAction::PlaceOrder {
-                side, kind, reason, ..
+                asset_id: _,
+                side,
+                kind,
+                reason,
+                ..
             } => {
                 let size_shares = self.order_size_shares(&kind, ctx)?;
                 self.state.risk_allows_trade(side, size_shares)?;

@@ -55,12 +55,14 @@ impl CombinatorialArbStrategy {
 
         Some(vec![
             StrategyAction::PlaceOrder {
+                asset_id: dep.source_market_id.clone(),
                 side: Side::Sell,
                 kind: OrderKind::MarketSell { size_shares },
                 order_type: OrderType::FOK,
                 reason: OrderReason::Signal,
             },
             StrategyAction::PlaceOrder {
+                asset_id: dep.target_market_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::MarketBuy {
                     usdc_amount: buy_usdc,
@@ -97,12 +99,14 @@ impl CombinatorialArbStrategy {
 
         Some(vec![
             StrategyAction::PlaceOrder {
+                asset_id: dep.source_market_id.clone(),
                 side: Side::Sell,
                 kind: OrderKind::MarketSell { size_shares },
                 order_type: OrderType::FOK,
                 reason: OrderReason::Signal,
             },
             StrategyAction::PlaceOrder {
+                asset_id: dep.target_market_id.clone(),
                 side: Side::Sell,
                 kind: OrderKind::MarketSell { size_shares },
                 order_type: OrderType::FOK,
@@ -127,7 +131,7 @@ impl CombinatorialArbStrategy {
             return None;
         }
 
-        let (sell_price, buy_price, sell_label, buy_label, sell_token, buy_token) =
+        let (sell_price, buy_price, sell_label, buy_label, sell_token, buy_token, sell_market_id, buy_market_id) =
             if source_price > target_price {
                 (
                     source_price,
@@ -136,6 +140,8 @@ impl CombinatorialArbStrategy {
                     "target",
                     &dep.source_token_id,
                     &dep.target_token_id,
+                    dep.source_market_id.clone(),
+                    dep.target_market_id.clone(),
                 )
             } else {
                 (
@@ -145,6 +151,8 @@ impl CombinatorialArbStrategy {
                     "source",
                     &dep.target_token_id,
                     &dep.source_token_id,
+                    dep.target_market_id.clone(),
+                    dep.source_market_id.clone(),
                 )
             };
 
@@ -158,12 +166,14 @@ impl CombinatorialArbStrategy {
 
         Some(vec![
             StrategyAction::PlaceOrder {
+                asset_id: sell_market_id,
                 side: Side::Sell,
                 kind: OrderKind::MarketSell { size_shares },
                 order_type: OrderType::FOK,
                 reason: OrderReason::Signal,
             },
             StrategyAction::PlaceOrder {
+                asset_id: buy_market_id,
                 side: Side::Buy,
                 kind: OrderKind::MarketBuy {
                     usdc_amount: buy_usdc,

@@ -127,6 +127,10 @@ impl StrategyContext {
 pub enum StrategyAction {
     /// Place a new order
     PlaceOrder {
+        /// Market/asset identifier the order should be routed to.
+        ///
+        /// Note: this may differ from `ctx.asset_id` for multi-market strategies.
+        asset_id: String,
         side: Side,
         kind: OrderKind,
         order_type: OrderType,

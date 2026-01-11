@@ -471,6 +471,7 @@ impl Strategy for MlStrategy {
             // Need to buy - use market sell type for buying at bid
             let buy_quantity = position_delta.unsigned_abs();
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: ctx.asset_id.clone(),
                 side: Side::Buy,
                 kind: OrderKind::Limit {
                     price_tick: best_bid,
@@ -483,6 +484,7 @@ impl Strategy for MlStrategy {
             // Need to sell - use market buy type for selling at ask
             let sell_quantity = position_delta.abs() as u64;
             actions.push(StrategyAction::PlaceOrder {
+                asset_id: ctx.asset_id.clone(),
                 side: Side::Sell,
                 kind: OrderKind::Limit {
                     price_tick: best_ask,
