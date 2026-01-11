@@ -13,6 +13,7 @@ members = [
     "crates/dashboard",
     "crates/research",
     "crates/ml",
+    "crates/data_pipeline",
 ]
 
 [workspace.package]

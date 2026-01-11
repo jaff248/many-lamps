@@ -17,13 +17,93 @@
 //! # Model format
 //! Models can be loaded from JSON format:
 //! ```no_run
+//! use mtrader_ml::{TkanModel, TkanConfig};
+//!
+//! let config = TkanConfig::default();
 //! let model = TkanModel::load_json("model.json", &config).expect("Failed to load model");
 //! ```
 //!
 //! For mock inference (no weights), use:
-//! ```
+//! ```no_run
+//! use mtrader_ml::{TkanModel, TkanConfig};
+//!
+//! let config = TkanConfig::default();
 //! let model = TkanModel::dummy(&config);
 //! ```
+
+// Large-Margin Softmax Classifier (Phase 2.1)
+mod margin_softmax;
+
+// Multi-Head Attention for Cross-Asset Correlation (Phase 2.2)
+mod attention;
+
+// Uncertainty Quantification for Position Sizing (Phase 2.3)
+mod uncertainty;
+
+// Feature extraction pipeline (Phase 1.2)
+mod feature_pipeline;
+
+// Inference engine (Phase 1.4)
+mod inference;
+
+// Meta-Learning (MAML) for Rapid Regime Adaptation (Phase 3.2)
+mod meta_learning;
+
+// Re-export margin softmax types
+pub use margin_softmax::{
+    MarginSoftmaxConfig,
+    MarginSoftmaxClassifier,
+    DirectionalSignal,
+};
+
+// Re-export attention types
+pub use attention::{
+    AttentionConfig,
+    MultiHeadAttention,
+    CrossAssetAttention,
+    scaled_dot_product_attention,
+    mean_pooling,
+    max_pooling,
+};
+
+// Re-export feature pipeline types
+pub use feature_pipeline::{
+    FeatureExtractor,
+    FeatureExtractorConfig,
+    ExtractedFeatureVector,
+    TokenFeatureState,
+    SlidingWindow,
+    RollingStats,
+    EMA,
+};
+
+// Re-export inference types
+pub use inference::{
+    InferenceEngine,
+    InferenceConfig,
+    InferenceMetrics,
+    FallbackPolicy,
+    InferenceError,
+};
+
+// Re-export uncertainty types
+pub use uncertainty::{
+    UncertaintyConfig,
+    UncertaintyEstimator,
+    UncertaintyResult,
+    MonteCarloDropout,
+    PositionSizingResult,
+};
+
+// Re-export meta-learning types
+pub use meta_learning::{
+    MAMLConfig,
+    MetaLearner,
+    Task,
+    MAMLError,
+    RegimeConverter,
+    MAMLInferenceAdapter,
+};
 
 use many_lamps_core::{Tick, Side};
 use serde::{Deserialize, Serialize};
