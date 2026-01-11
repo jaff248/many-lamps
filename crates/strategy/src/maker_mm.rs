@@ -190,6 +190,7 @@ impl Strategy for MakerMMStrategy {
                         let size = self.calculate_order_size(Side::Buy, ctx.position.net_size);
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
+                                asset_id: ctx.asset_id.clone(),
                                 side: Side::Buy,
                                 kind: OrderKind::Limit {
                                     price_tick: target_bid,
@@ -232,6 +233,7 @@ impl Strategy for MakerMMStrategy {
                         let size = self.calculate_order_size(Side::Sell, ctx.position.net_size);
                         if size > 0 {
                             actions.push(StrategyAction::PlaceOrder {
+                                asset_id: ctx.asset_id.clone(),
                                 side: Side::Sell,
                                 kind: OrderKind::Limit {
                                     price_tick: target_ask,

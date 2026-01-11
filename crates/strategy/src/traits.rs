@@ -107,6 +107,7 @@ impl StrategyContext {
 pub enum StrategyAction {
     /// Place a new order
     PlaceOrder {
+        asset_id: String,
         side: Side,
         kind: OrderKind,
         order_type: OrderType,

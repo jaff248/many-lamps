@@ -178,8 +178,16 @@ impl AutoHedgeStrategy {
         self.best_bid.get(asset_id).copied()
     }
 
-    fn place_buy(&self, price_tick: Tick) -> StrategyAction {
+    fn asset_id_for_side(&self, side: HedgeSide) -> &str {
+        match side {
+            HedgeSide::Up => &self.up_asset_id,
+            HedgeSide::Down => &self.down_asset_id,
+        }
+    }
+
+    fn place_buy(&self, asset_id: &str, price_tick: Tick) -> StrategyAction {
         StrategyAction::PlaceOrder {
+            asset_id: asset_id.to_string(),
             side: Side::Buy,
             kind: OrderKind::Limit {
                 price_tick,
@@ -190,8 +198,9 @@ impl AutoHedgeStrategy {
         }
     }
 
-    fn place_sell(&self, price_tick: Tick) -> StrategyAction {
+    fn place_sell(&self, asset_id: &str, price_tick: Tick) -> StrategyAction {
         StrategyAction::PlaceOrder {
+            asset_id: asset_id.to_string(),
             side: Side::Sell,
             kind: OrderKind::Limit {
                 price_tick,
@@ -219,7 +228,7 @@ impl AutoHedgeStrategy {
             entry_time_ns: now_ns,
         });
 
-        Some(self.place_buy(ask))
+        Some(self.place_buy(asset_id, ask))
     }
 
     fn maybe_trigger_leg2(&mut self) -> Option<StrategyAction> {
@@ -228,7 +237,8 @@ impl AutoHedgeStrategy {
         let opp_ask = self.best_ask_for(opposite)?;
         let sum_target_tick = self.sum_target_tick();
         if leg1.entry_tick as u32 + opp_ask as u32 <= sum_target_tick as u32 {
-            let action = self.place_buy(opp_ask);
+            let asset_id = self.asset_id_for_side(opposite);
+            let action = self.place_buy(asset_id, opp_ask);
             self.leg1 = None;
             return Some(action);
         }
@@ -242,7 +252,8 @@ impl AutoHedgeStrategy {
 
         let leg1 = self.leg1.take()?;
         let best_bid = self.best_bid_for(leg1.side)?;
-        Some(self.place_sell(best_bid))
+        let asset_id = self.asset_id_for_side(leg1.side);
+        Some(self.place_sell(asset_id, best_bid))
     }
 }
 

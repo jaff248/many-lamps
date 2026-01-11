@@ -667,6 +667,7 @@ pub async fn run(
         while let Some(action) = pending_actions.pop_front() {
             match action {
                 StrategyAction::PlaceOrder {
+                    asset_id,
                     side,
                     kind,
                     order_type,
@@ -682,7 +683,7 @@ pub async fn run(
 
                     let order = Order::new(
                         client_order_id.clone(),
-                        "asset".to_string(),
+                        asset_id,
                         side,
                         kind,
                         order_type,

@@ -111,3 +111,16 @@ Contains robust logic for deriving smart contract wallet addresses.
 3.  **Phase 3 (Strategy)**: Refactor `Strategy` trait to return `Vec<Signal>` and provide richer `StrategyContext`.
 4.  **Phase 4 (Execution)**: Add auto-hedging logic for partial fills in arbitrage strategies.
 5.  **Phase 5 (Utilities)**: Add wallet derivation tools and optional job scheduler.
+6.  **Phase 6 (Combinatorial Arbitrage Implementation)**:
+    - **Dependency Graph Representation**: Model markets and instruments as a directed graph where nodes are outcomes/contracts and edges encode conversion via orders or swaps. Track edge weight as negative log price (or fee-adjusted spread) to detect profitable cycles via shortest-path / negative-cycle checks.
+    - **Price Monitoring Loop**: Maintain a real-time price cache keyed by market/outcome (best bid/ask and depth). Update edge weights on each tick or book delta, recompute candidate cycles incrementally (e.g., BFS from touched nodes), and throttle with a debounce window to avoid over-triggering on noisy updates.
+    - **Execution Rules**: Require minimum net edge weight (profit threshold after fees/slippage), enforce max cycle length, validate liquidity at each hop, and use atomic-ish execution with concurrent leg placement plus a rollback/auto-hedge for partial fills. Emit structured telemetry for fill rates and abort reasons.
+7.  **Phase 7 (T-KAN Integration Roadmap)**:
+    - **Rust ML Stack Choice**: Prototype with `tch-rs` for parity with the PyTorch reference and later evaluate `burn` for native Rust ergonomics and deployment. Keep a feature flag to switch backends.
+    - **Layer Approximation**: The Python reference uses a SiLU-based MLP approximation of the KAN layer; replicate this first in Rust to validate correctness before experimenting with true KAN kernels.
+    - **Data/Feature Pipeline**: Define a deterministic preprocessing pipeline (normalization, windowing) shared by training and inference. Add a model registry artifact format (weights + metadata) to version checkpoints.
+    - **Integration Steps**: (1) port model definition to Rust, (2) load PyTorch weights via `tch-rs` to validate outputs, (3) introduce inference in the strategy path behind a runtime toggle, (4) profile latency and memory, (5) swap to `burn` if performance or ergonomics improve.
+8.  **Phase 8 (Strategy Engine Refactor with Signal + Risk Guard)**:
+    - **Signal Abstraction**: Introduce a `Signal` enum (entry/exit/adjust) with optional sizing, price constraints, and metadata. Strategies emit signals; the engine translates them into orders.
+    - **Risk Guard Processing**: Centralize checks in a `RiskGuard` pipeline (position limits, exposure caps, max order size, cooldowns). The engine filters/rejects signals with structured reasons and metrics.
+    - **Execution Flow Update**: Strategy evaluation → signal normalization → risk guard → execution planner → order placement. Add tracing IDs to tie signals to orders and fills.

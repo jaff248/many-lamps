@@ -117,6 +117,7 @@ impl CombinatorialArbStrategy {
 
                 // 1. Sell Source (Short)
                 actions.push(StrategyAction::PlaceOrder {
+                    asset_id: dep.source_market_id.clone(),
                     side: Side::Sell,
                     kind: OrderKind::Market { size_shares },
                     order_type: OrderType::GoodForDay,
@@ -125,6 +126,7 @@ impl CombinatorialArbStrategy {
 
                 // 2. Buy Target (Long)
                 actions.push(StrategyAction::PlaceOrder {
+                    asset_id: dep.target_market_id.clone(),
                     side: Side::Buy,
                     kind: OrderKind::Market { size_shares },
                     order_type: OrderType::GoodForDay,
@@ -134,6 +136,122 @@ impl CombinatorialArbStrategy {
                 return Some(actions);
             }
         }
+        None
+    }
+
+    fn check_mutually_exclusive_arb(
+        &self,
+        dep: &Dependency,
+        source_price: Decimal,
+        target_price: Decimal,
+    ) -> Option<Vec<StrategyAction>> {
+        // Mutually exclusive: Prob(Source) + Prob(Target) <= 1.
+        // Arb opportunity: Source + Target > 1.
+        // Action: Sell Source + Sell Target.
+
+        let total = source_price + target_price;
+        if total > dec!(1.0) {
+            let diff = total - dec!(1.0);
+            let profit_bps = (diff * dec!(10000)).to_u32().unwrap_or(0);
+
+            if profit_bps >= dep.min_profit_bps.max(self.config.min_profit_threshold_bps) {
+                info!(
+                    "Combinatorial Arb (Mutually Exclusive): {} + {} > 1 (diff: {} bps)",
+                    dep.source_token_id, dep.target_token_id, profit_bps
+                );
+
+                let mut actions = Vec::new();
+                let size_shares = 10; // Placeholder: Calculate based on max_leg_size_usdc
+
+                actions.push(StrategyAction::PlaceOrder {
+                    asset_id: dep.source_market_id.clone(),
+                    side: Side::Sell,
+                    kind: OrderKind::Market { size_shares },
+                    order_type: OrderType::GoodForDay,
+                    reason: format!(
+                        "CombArb: Sell Mutually Exclusive Source {}",
+                        dep.source_token_id
+                    ),
+                });
+
+                actions.push(StrategyAction::PlaceOrder {
+                    asset_id: dep.target_market_id.clone(),
+                    side: Side::Sell,
+                    kind: OrderKind::Market { size_shares },
+                    order_type: OrderType::GoodForDay,
+                    reason: format!(
+                        "CombArb: Sell Mutually Exclusive Target {}",
+                        dep.target_token_id
+                    ),
+                });
+
+                return Some(actions);
+            }
+        }
+
+        None
+    }
+
+    fn check_identical_arb(
+        &self,
+        dep: &Dependency,
+        source_price: Decimal,
+        target_price: Decimal,
+    ) -> Option<Vec<StrategyAction>> {
+        // Identical: Prob(Source) == Prob(Target).
+        // Arb opportunity: Price difference.
+        // Action: Buy cheaper, sell more expensive.
+
+        if source_price == target_price {
+            return None;
+        }
+
+        let (buy_market_id, buy_token_id, sell_market_id, sell_token_id, diff) =
+            if source_price < target_price {
+                (
+                    dep.source_market_id.clone(),
+                    dep.source_token_id.clone(),
+                    dep.target_market_id.clone(),
+                    dep.target_token_id.clone(),
+                    target_price - source_price,
+                )
+            } else {
+                (
+                    dep.target_market_id.clone(),
+                    dep.target_token_id.clone(),
+                    dep.source_market_id.clone(),
+                    dep.source_token_id.clone(),
+                    source_price - target_price,
+                )
+            };
+
+        let profit_bps = (diff * dec!(10000)).to_u32().unwrap_or(0);
+        if profit_bps >= dep.min_profit_bps.max(self.config.min_profit_threshold_bps) {
+            info!(
+                "Combinatorial Arb (Identical): {} vs {} (diff: {} bps)",
+                dep.source_token_id, dep.target_token_id, profit_bps
+            );
+
+            let size_shares = 10; // Placeholder: Calculate based on max_leg_size_usdc
+
+            return Some(vec![
+                StrategyAction::PlaceOrder {
+                    asset_id: buy_market_id,
+                    side: Side::Buy,
+                    kind: OrderKind::Market { size_shares },
+                    order_type: OrderType::GoodForDay,
+                    reason: format!("CombArb: Buy Cheaper {}", buy_token_id),
+                },
+                StrategyAction::PlaceOrder {
+                    asset_id: sell_market_id,
+                    side: Side::Sell,
+                    kind: OrderKind::Market { size_shares },
+                    order_type: OrderType::GoodForDay,
+                    reason: format!("CombArb: Sell Richer {}", sell_token_id),
+                },
+            ]);
+        }
+
         None
     }
 }
@@ -159,11 +277,26 @@ impl Strategy for CombinatorialArbStrategy {
 
             match dep.relation {
                 DependencyType::Implication => {
-                    if let Some(arb_actions) = self.check_implication_arb(dep, source_price, target_price) {
+                    if let Some(arb_actions) =
+                        self.check_implication_arb(dep, source_price, target_price)
+                    {
                         actions.extend(arb_actions);
                     }
                 }
-                _ => {} // Implement other types
+                DependencyType::MutuallyExclusive => {
+                    if let Some(arb_actions) =
+                        self.check_mutually_exclusive_arb(dep, source_price, target_price)
+                    {
+                        actions.extend(arb_actions);
+                    }
+                }
+                DependencyType::Identical => {
+                    if let Some(arb_actions) =
+                        self.check_identical_arb(dep, source_price, target_price)
+                    {
+                        actions.extend(arb_actions);
+                    }
+                }
             }
         }
 
@@ -212,5 +345,21 @@ mod tests {
         assert!(actions.is_some());
         let actions = actions.unwrap();
         assert_eq!(actions.len(), 2); // Sell Source, Buy Target
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            StrategyAction::PlaceOrder {
+                asset_id,
+                side: Side::Sell,
+                ..
+            } if asset_id == "m1"
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            StrategyAction::PlaceOrder {
+                asset_id,
+                side: Side::Buy,
+                ..
+            } if asset_id == "m2"
+        )));
     }
 }
