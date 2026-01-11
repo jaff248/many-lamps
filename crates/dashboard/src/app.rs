@@ -1348,6 +1348,36 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('2') => {
+                self.state.replay_speed = 2.0;
+                self.state.set_status("Speed: 2x");
+            }
+            KeyCode::Char('5') => {
+                self.state.replay_speed = 5.0;
+                self.state.set_status("Speed: 5x");
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
+            _ => {}
+        }
+    }
+
+    fn replay(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if self.state.selected_replay > 0 => {
+                self.state.selected_replay -= 1;
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.state.selected_replay < self.state.replay_files.len().saturating_sub(1) =>
+            {
+                self.state.selected_replay += 1;
+            }
+            KeyCode::Enter => {
+                self.state.replay_paused = !self.state.replay_paused;
+                if self.state.replay_paused {
+                    self.state.set_status("Replay paused.");
+                } else {
+                    self.state.set_status("Replay started.");
+                }
             }
             KeyCode::Char('2') => {
                 self.state.replay_speed = 2.0;
@@ -1394,22 +1424,21 @@ impl App {
     }
 
     fn market_selection(&mut self, key: event::KeyEvent) {
-        let ms = &mut self.state.market_selection;
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                ms.select_prev();
+                self.state.market_selection.select_prev();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                ms.select_next();
+                self.state.market_selection.select_next();
             }
             KeyCode::PageUp => {
-                ms.prev_page();
+                self.state.market_selection.prev_page();
             }
             KeyCode::PageDown => {
-                ms.next_page();
+                self.state.market_selection.next_page();
             }
             KeyCode::Enter => {
-                if let Some(market) = ms.selected_market() {
+                if let Some(market) = self.state.market_selection.selected_market() {
                     // Convert PolymarketMarket to Market and set as current
                     let price = market.yes_price.unwrap_or(0.5);
                     self.state.market = Market {
@@ -1423,7 +1452,7 @@ impl App {
                 }
             }
             KeyCode::Char('/') => {
-                ms.is_searching = true;
+                self.state.market_selection.is_searching = true;
                 self.state.set_status("Search markets...");
             }
             KeyCode::Char('r') => {
@@ -1432,22 +1461,22 @@ impl App {
                 // Would fetch from Polymarket API here
             }
             KeyCode::Char('v') => {
-                ms.sort_by = MarketSortBy::Volume;
-                ms.sort_desc = true;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Volume;
+                self.state.market_selection.sort_desc = true;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Char('n') => {
-                ms.sort_by = MarketSortBy::Name;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Name;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Char('p') => {
-                ms.sort_by = MarketSortBy::Price;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Price;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Esc | KeyCode::Char('q') => {
-                ms.is_searching = false;
-                ms.search_query.clear();
-                ms.filter_and_sort();
+                self.state.market_selection.is_searching = false;
+                self.state.market_selection.search_query.clear();
+                self.state.market_selection.filter_and_sort();
                 self.state.current_menu = MenuItem::MainMenu;
             }
             _ => {}
