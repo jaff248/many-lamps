@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
             status::run(&cli.config, verbose)?;
         }
         Commands::Tui => {
-            tui::run().await?;
+            tui::run(None).await?;
         }
         Commands::ValidateConfig => {
             println!("Configuration valid: {}", cli.config);

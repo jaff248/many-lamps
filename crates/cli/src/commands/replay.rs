@@ -514,7 +514,7 @@ pub async fn run(
     engine.load_events(events);
 
     let mut book = ArrayBook::new(100);
-    let mut paper_book = PaperBook::new(100);
+    let mut paper_book = PaperBook::new(100.0, 100);
     let mut position = Position::new();
     let mut order_manager = OrderStateManager::new(OrderManagerConfig::default());
 
@@ -705,6 +705,7 @@ pub async fn run(
                             price_tick,
                             size: size_shares,
                             timestamp_ns: now_ns,
+                            queue_position: queue_ahead,
                         });
                     }
                 }

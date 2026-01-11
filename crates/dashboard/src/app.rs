@@ -9,19 +9,21 @@ use crossterm::{
     event::{self, Event, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use many_lamps_core::fees::MarketFeeProfile;
+use many_lamps_core::{fees::MarketFeeProfile, Side};
 use mtrader_sim::{load_snapshots, run_backtest, BacktestConfig as SimBacktestConfig};
-use mtrader_strategy::traits::{Strategy, StrategyAction, StrategyContext};
+use mtrader_strategy::auto_hedge::{AutoHedgeConfig, AutoHedgeStrategy};
 use mtrader_strategy::bundle_maker::BundleMakerConfig;
 use mtrader_strategy::bundle_maker::BundleMakerStrategy;
+use mtrader_strategy::combinatorial_arb::{CombinatorialArbConfig, CombinatorialArbStrategy};
 use mtrader_strategy::maker_mm::MakerMMConfig;
 use mtrader_strategy::maker_mm::MakerMMStrategy;
-use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
-use mtrader_strategy::unaffected_arb::UnaffectedArbStrategy;
-use mtrader_strategy::auto_hedge::{AutoHedgeConfig, AutoHedgeStrategy};
-use mtrader_strategy::combinatorial_arb::{CombinatorialArbConfig, CombinatorialArbStrategy};
 use mtrader_strategy::ml_strategy::MlStrategy;
 use mtrader_strategy::ml_strategy::MlStrategyConfig;
+use mtrader_strategy::traits::{
+    MarketSnapshot, MarketTokenKey, Strategy, StrategyAction, StrategyContext,
+};
+use mtrader_strategy::unaffected_arb::UnaffectedArbConfig;
+use mtrader_strategy::unaffected_arb::UnaffectedArbStrategy;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -31,7 +33,10 @@ use ratatui::{
     Terminal,
 };
 use std::collections::HashMap;
-use std::{io::{self, Stdout}, time::{Duration, Instant}};
+use std::{
+    io::{self, Stdout},
+    time::{Duration, Instant},
+};
 
 const VERSION: &str = "2.0.0";
 
@@ -266,25 +271,32 @@ impl MarketSelection {
         // Sort markets
         match self.sort_by {
             MarketSortBy::Volume => {
-                self.filtered_markets
-                    .sort_by(|a, b| b.volume.partial_cmp(&a.volume).unwrap_or(std::cmp::Ordering::Equal));
+                self.filtered_markets.sort_by(|a, b| {
+                    b.volume
+                        .partial_cmp(&a.volume)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
             }
             MarketSortBy::Name => {
                 self.filtered_markets
                     .sort_by(|a, b| a.question.cmp(&b.question));
             }
             MarketSortBy::Price => {
-                self.filtered_markets
-                    .sort_by(|a, b| {
-                        let a_price = a.yes_price.unwrap_or(0.5);
-                        let b_price = b.yes_price.unwrap_or(0.5);
-                        b_price.partial_cmp(&a_price).unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                self.filtered_markets.sort_by(|a, b| {
+                    let a_price = a.yes_price.unwrap_or(0.5);
+                    let b_price = b.yes_price.unwrap_or(0.5);
+                    b_price
+                        .partial_cmp(&a_price)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
             }
             MarketSortBy::Activity => {
                 // Sort by volume for activity
-                self.filtered_markets
-                    .sort_by(|a, b| b.volume.partial_cmp(&a.volume).unwrap_or(std::cmp::Ordering::Equal));
+                self.filtered_markets.sort_by(|a, b| {
+                    b.volume
+                        .partial_cmp(&a.volume)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
             }
         }
 
@@ -611,14 +623,18 @@ impl AppState {
     /// Create a strategy instance based on strategy name
     pub fn create_strategy(&mut self) -> Result<(), String> {
         let market_id = self.market.condition_id.clone();
-        
+
         self.active_strategy = match self.strategy_name.as_str() {
             "maker_mm" => {
                 let config = MakerMMConfig {
                     half_spread_ticks: self.strategy_params.spread_bps / 10,
                     order_size: self.strategy_params.order_size * 1_000_000,
                     max_position: self.risk_config.max_position * 1_000_000,
-                    skew_factor: if self.strategy_params.inventory_skew { 0.3 } else { 0.0 },
+                    skew_factor: if self.strategy_params.inventory_skew {
+                        0.3
+                    } else {
+                        0.0
+                    },
                     ..Default::default()
                 };
                 Some(Box::new(MakerMMStrategy::new(
@@ -657,7 +673,9 @@ impl AppState {
             "rebalancing_arb" => {
                 // Note: RebalancingArbStrategy uses async API, not the Strategy trait
                 // It's a separate scanning strategy that can be used independently
-                self.set_status("Use API scanner for rebalancing arb (not yet integrated with TUI)");
+                self.set_status(
+                    "Use API scanner for rebalancing arb (not yet integrated with TUI)",
+                );
                 return Err("RebalancingArb requires async API scanner".to_string());
             }
             "auto_hedge" => {
@@ -706,7 +724,7 @@ impl AppState {
                 )) as Box<dyn Strategy>)
             }
         };
-        
+
         self.set_status(&format!("Strategy '{}' initialized", self.strategy_name));
         Ok(())
     }
@@ -717,7 +735,8 @@ impl AppState {
             .iter()
             .position(|&s| s == self.strategy_name)
             .unwrap_or(0);
-        self.strategy_name = AVAILABLE_STRATEGIES[(idx + 1) % AVAILABLE_STRATEGIES.len()].to_string();
+        self.strategy_name =
+            AVAILABLE_STRATEGIES[(idx + 1) % AVAILABLE_STRATEGIES.len()].to_string();
         self.set_status(&format!("Strategy: {}", self.strategy_name));
     }
 
@@ -726,7 +745,7 @@ impl AppState {
         // Convert best_bid/best_ask (prices) to ticks
         let best_bid_tick = (self.best_bid * 10000.0) as i16;
         let best_ask_tick = (self.best_ask * 10000.0) as i16;
-        
+
         // Calculate mid tick and spread
         let (mid_tick, spread_ticks) = if best_ask_tick > best_bid_tick {
             let mid = (best_bid_tick + best_ask_tick) / 2;
@@ -735,11 +754,14 @@ impl AppState {
         } else {
             (None, None)
         };
-        
+
+        let mut position = mtrader_risk::Position::new();
+        position.net_size = self.position;
+
         StrategyContext {
             now_ns,
             asset_id: self.market.condition_id.clone(),
-            position: mtrader_risk::Position::new(),
+            position,
             pnl: mtrader_risk::PnLSnapshot {
                 timestamp_ns: now_ns,
                 realized_pnl: self.realized_pnl,
@@ -751,15 +773,23 @@ impl AppState {
                 drawdown: 0,
                 drawdown_bps: 0,
             },
-            best_bid: if self.best_bid > 0.0 { Some(best_bid_tick as _) } else { None },
-            best_ask: if self.best_ask > 0.0 { Some(best_ask_tick as _) } else { None },
+            best_bid: if self.best_bid > 0.0 {
+                Some(best_bid_tick as _)
+            } else {
+                None
+            },
+            best_ask: if self.best_ask > 0.0 {
+                Some(best_ask_tick as _)
+            } else {
+                None
+            },
             best_bid_size: self.active_bids as _,
             best_ask_size: self.active_asks as _,
             mid_tick,
             spread_ticks,
             our_bids: Vec::new(),
             our_asks: Vec::new(),
-            market_snapshots: HashMap::new(),
+            market_snapshots: self.build_market_snapshots(),
         }
     }
 
@@ -810,6 +840,121 @@ impl AppState {
             self.strategy_signals.pop();
         }
     }
+
+    fn build_market_snapshots(&self) -> HashMap<MarketTokenKey, MarketSnapshot> {
+        let mut snapshots = HashMap::new();
+
+        if !self.market_selection.markets.is_empty() {
+            for market in &self.market_selection.markets {
+                let yes_price = market.yes_price;
+                let no_price = market.no_price.or_else(|| yes_price.map(|p| 1.0 - p));
+
+                if let Some(price) = yes_price {
+                    if let Some(snapshot) = Self::snapshot_from_price(price) {
+                        snapshots.insert(
+                            MarketTokenKey {
+                                market_id: market.condition_id.clone(),
+                                token_id: "yes".to_string(),
+                            },
+                            snapshot,
+                        );
+                    }
+                }
+
+                if let Some(price) = no_price {
+                    if let Some(snapshot) = Self::snapshot_from_price(price) {
+                        snapshots.insert(
+                            MarketTokenKey {
+                                market_id: market.condition_id.clone(),
+                                token_id: "no".to_string(),
+                            },
+                            snapshot,
+                        );
+                    }
+                }
+            }
+        } else {
+            for market in &self.markets_list {
+                let yes_price = market.price;
+                let no_price = (1.0 - market.price).clamp(0.0, 1.0);
+
+                if let Some(snapshot) = Self::snapshot_from_price(yes_price) {
+                    snapshots.insert(
+                        MarketTokenKey {
+                            market_id: market.condition_id.clone(),
+                            token_id: "yes".to_string(),
+                        },
+                        snapshot,
+                    );
+                }
+
+                if let Some(snapshot) = Self::snapshot_from_price(no_price) {
+                    snapshots.insert(
+                        MarketTokenKey {
+                            market_id: market.condition_id.clone(),
+                            token_id: "no".to_string(),
+                        },
+                        snapshot,
+                    );
+                }
+            }
+        }
+
+        snapshots
+    }
+
+    fn snapshot_from_price(price: f64) -> Option<MarketSnapshot> {
+        if !(0.0..=1.0).contains(&price) {
+            return None;
+        }
+
+        let tick = (price * 10000.0).round() as u16;
+        Some(MarketSnapshot {
+            best_bid: Some(tick),
+            best_ask: Some(tick),
+            mid_tick: Some(tick),
+        })
+    }
+
+    fn risk_allows_trade(&mut self, side: Side, size_shares: i64) -> Result<(), String> {
+        if self.risk_config.max_daily_trades > 0
+            && self.daily_trades >= self.risk_config.max_daily_trades
+        {
+            self.halt_auto_trading("Daily trade limit reached");
+            return Err("Daily trade limit reached".to_string());
+        }
+
+        if self.drawdown_bps() > self.risk_config.max_drawdown_bps {
+            self.halt_auto_trading("Max drawdown exceeded");
+            return Err("Max drawdown exceeded".to_string());
+        }
+
+        let max_order_size = self.risk_config.max_order_size as i64 * 1_000_000;
+        if size_shares.abs() > max_order_size {
+            return Err("Order size exceeds configured limit".to_string());
+        }
+
+        let max_position = self.risk_config.max_position * 1_000_000;
+        let projected_position = match side {
+            Side::Buy => self.position + size_shares,
+            Side::Sell => self.position - size_shares,
+        };
+        if projected_position.abs() > max_position {
+            return Err("Projected position exceeds configured limit".to_string());
+        }
+
+        Ok(())
+    }
+
+    fn halt_auto_trading(&mut self, reason: &str) {
+        self.auto_trading = AutoTradingState::Halted(reason.to_string());
+        self.circuit_breaker_tripped = true;
+        self.circuit_breaker_reason = reason.to_string();
+        self.set_status(&format!("Auto-trading halted: {}", reason));
+        if let Some(ref mut strategy) = self.active_strategy {
+            strategy.on_halt();
+        }
+    }
 }
 
 pub struct App {
@@ -829,6 +974,24 @@ impl App {
         })
     }
 
+    pub fn set_market_by_id(&mut self, id: &str) {
+        let market = self
+            .state
+            .markets_list
+            .iter()
+            .find(|m| m.condition_id == id)
+            .cloned()
+            .unwrap_or_else(|| Market {
+                condition_id: id.to_string(),
+                name: format!("Custom: {}", id),
+                price: 0.5000,
+                volume: 0.0,
+            });
+
+        self.state.market = market;
+        self.state.set_status(&format!("Market set to: {}", id));
+    }
+
     pub fn run(&mut self) -> Result<()> {
         self.terminal.clear()?;
         self.load_replay_files();
@@ -840,10 +1003,10 @@ impl App {
                     self.handle_input(key);
                 }
             }
-            
+
             // Strategy execution loop - runs when auto-trading is enabled
             self.execute_strategy_cycle();
-            
+
             if self.state.current_menu == MenuItem::Quit {
                 break;
             }
@@ -857,30 +1020,34 @@ impl App {
         if self.state.auto_trading != AutoTradingState::Running {
             return;
         }
-        
+
         // Initialize strategy if not already done
         if self.state.active_strategy.is_none() {
             if let Err(e) = self.state.create_strategy() {
-                self.state.set_status(&format!("Strategy init failed: {}", e));
+                self.state
+                    .set_status(&format!("Strategy init failed: {}", e));
                 self.state.auto_trading = AutoTradingState::Disabled;
                 return;
             }
         }
-        
+
         // Build context first (before any borrow of self.state)
-        let now_ns = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos() as u64;
+        let now_ns = std::time::UNIX_EPOCH
+            .elapsed()
+            .unwrap_or_default()
+            .as_nanos() as u64;
         let ctx = self.state.build_strategy_context(now_ns);
-        
+
         // Activate strategy if not already active
         let strategy_name = self.state.strategy_name.clone();
         if let Some(ref mut strategy) = self.state.active_strategy {
             if !strategy.is_active() {
                 strategy.activate();
             }
-            
+
             // Get actions from strategy
             let actions = strategy.on_update(&ctx);
-            
+
             // Execute each action
             for action in actions {
                 if let Err(e) = self.execute_strategy_action(action, &ctx) {
@@ -890,73 +1057,84 @@ impl App {
         }
         // Set status after strategy operations
         if self.state.auto_trading == AutoTradingState::Running {
-            self.state.set_status(&format!("Strategy '{}' activated", strategy_name));
+            self.state
+                .set_status(&format!("Strategy '{}' activated", strategy_name));
         }
     }
 
     /// Execute a strategy action and update state
-    fn execute_strategy_action(&mut self, action: StrategyAction, ctx: &StrategyContext) -> Result<(), String> {
+    fn execute_strategy_action(
+        &mut self,
+        action: StrategyAction,
+        ctx: &StrategyContext,
+    ) -> Result<(), String> {
         match action {
-            StrategyAction::PlaceOrder { side, kind, reason, .. } => {
+            StrategyAction::PlaceOrder {
+                side, kind, reason, ..
+            } => {
+                let size_shares = self.order_size_shares(&kind, ctx)?;
+                self.state.risk_allows_trade(side, size_shares)?;
+
                 // Create signal for display
                 let ts = Local::now().format("%H:%M:%S.%3f").to_string();
-                let size = match kind {
-                    mtrader_execution::OrderKind::Limit { size_shares, .. } => size_shares as i64,
-                    _ => 1_000_000,
-                };
                 let price = ctx.mid_tick.map(|t| t as f64 / 10000.0);
-                
+
                 let signal = StrategySignal {
                     timestamp: ts.clone(),
                     signal_type: format!("{:?}", side),
                     details: format!("{:?} - {:?}", kind, reason),
                     side: Some(format!("{:?}", side)),
-                    size: Some(size),
+                    size: Some(size_shares),
                     price,
                 };
                 self.state.add_strategy_signal(signal);
-                
+
                 // Log the order
                 let order_info = format!("ORDER: {:?} {:?} - {:?}", side, kind, reason);
-                self.state.activity_log.insert(0, format!("[{}] {}", ts, order_info));
-                
+                self.state
+                    .activity_log
+                    .insert(0, format!("[{}] {}", ts, order_info));
+
                 // Simulate fill for paper trading (immediate fill at mid price)
                 if let Some(mid_tick) = ctx.mid_tick {
                     // Update position
                     let position_delta = match side {
-                        many_lamps_core::Side::Buy => size,
-                        many_lamps_core::Side::Sell => -size,
+                        Side::Buy => size_shares,
+                        Side::Sell => -size_shares,
                     };
                     self.state.position += position_delta;
-                    
+
                     // Calculate PnL impact (simplified)
                     let price_f = mid_tick as f64 / 10000.0;
                     let pnl_impact = (position_delta as f64 * price_f * 1_000_000.0) as i64;
-                    
+
                     self.state.set_status(&format!(
                         "Filled: {:?} {} @ {:.4} (Pos: {})",
-                        side, size, price_f, self.state.position
+                        side, size_shares, price_f, self.state.position
                     ));
-                    
+
                     // Simulate fill callback to strategy
                     if let Some(ref mut strategy) = self.state.active_strategy {
-                        strategy.on_fill(ctx, side, mid_tick, size as _);
+                        strategy.on_fill(ctx, side, mid_tick, size_shares as _);
                     }
-                    
+
                     self.state.trades_count += 1;
                     self.state.daily_trades += 1;
-                    
+
                     // Add simulated fee
-                    let fee = (size as f64 * price_f * 0.001) as i64; // 10 bps fee estimate
+                    let fee = (size_shares as f64 * price_f * 0.001) as i64; // 10 bps fee estimate
                     self.state.total_fees += fee;
-                    
+
                     // Update realized PnL (simplified)
                     self.state.realized_pnl += pnl_impact - fee;
                 }
                 Ok(())
             }
-            
-            StrategyAction::CancelOrder { client_order_id, reason } => {
+
+            StrategyAction::CancelOrder {
+                client_order_id,
+                reason,
+            } => {
                 let ts = Local::now().format("%H:%M:%S.%3f").to_string();
                 let signal = StrategySignal {
                     timestamp: ts.clone(),
@@ -967,13 +1145,21 @@ impl App {
                     price: None,
                 };
                 self.state.add_strategy_signal(signal);
-                
-                self.state.activity_log.insert(0, format!("[{}] CANCEL: {:?} - {}", ts, client_order_id, reason));
-                self.state.set_status(&format!("Cancelled order: {:?}", client_order_id));
+
+                self.state.activity_log.insert(
+                    0,
+                    format!("[{}] CANCEL: {:?} - {}", ts, client_order_id, reason),
+                );
+                self.state
+                    .set_status(&format!("Cancelled order: {:?}", client_order_id));
                 Ok(())
             }
-            
-            StrategyAction::AmendOrder { client_order_id, new_kind, reason } => {
+
+            StrategyAction::AmendOrder {
+                client_order_id,
+                new_kind,
+                reason,
+            } => {
                 let ts = Local::now().format("%H:%M:%S.%3f").to_string();
                 let signal = StrategySignal {
                     timestamp: ts.clone(),
@@ -984,15 +1170,46 @@ impl App {
                     price: None,
                 };
                 self.state.add_strategy_signal(signal);
-                
-                self.state.activity_log.insert(0, format!("[{}] AMEND: {:?} -> {:?} - {}", ts, client_order_id, new_kind, reason));
-                self.state.set_status(&format!("Amended order: {:?}", client_order_id));
+
+                self.state.activity_log.insert(
+                    0,
+                    format!(
+                        "[{}] AMEND: {:?} -> {:?} - {}",
+                        ts, client_order_id, new_kind, reason
+                    ),
+                );
+                self.state
+                    .set_status(&format!("Amended order: {:?}", client_order_id));
                 Ok(())
             }
-            
+
             StrategyAction::NoOp => {
                 // No action needed
                 Ok(())
+            }
+        }
+    }
+
+    fn order_size_shares(
+        &self,
+        kind: &mtrader_execution::OrderKind,
+        ctx: &StrategyContext,
+    ) -> Result<i64, String> {
+        match kind {
+            mtrader_execution::OrderKind::Limit { size_shares, .. } => Ok(*size_shares as i64),
+            mtrader_execution::OrderKind::MarketSell { size_shares } => Ok(*size_shares as i64),
+            mtrader_execution::OrderKind::MarketBuy { usdc_amount } => {
+                let price = ctx
+                    .mid_tick
+                    .map(|tick| tick as f64 / 10000.0)
+                    .filter(|p| *p > 0.0)
+                    .ok_or_else(|| "Missing mid price for market buy sizing".to_string())?;
+                let shares = (*usdc_amount as f64 / price) as i64;
+                if shares == 0 {
+                    Err("Market buy size rounds to zero".to_string())
+                } else {
+                    Ok(shares)
+                }
             }
         }
     }
@@ -1203,10 +1420,12 @@ impl App {
                         self.state.auto_trading = AutoTradingState::Running;
                         // Initialize and activate strategy
                         if let Err(e) = self.state.create_strategy() {
-                            self.state.set_status(&format!("Strategy init failed: {}", e));
+                            self.state
+                                .set_status(&format!("Strategy init failed: {}", e));
                             self.state.auto_trading = AutoTradingState::Disabled;
                         } else {
-                            self.state.set_status("Auto-trading ENABLED. Strategy is now active.");
+                            self.state
+                                .set_status("Auto-trading ENABLED. Strategy is now active.");
                         }
                     }
                     AutoTradingState::Running => {
@@ -1229,7 +1448,8 @@ impl App {
                         self.state.auto_trading = AutoTradingState::Disabled;
                         self.state.circuit_breaker_tripped = false;
                         self.state.active_strategy = None;
-                        self.state.set_status("Auto-trading reset. Circuit breaker cleared.");
+                        self.state
+                            .set_status("Auto-trading reset. Circuit breaker cleared.");
                     }
                 }
                 if was_halted {
@@ -1348,6 +1568,39 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('2') => {
+                self.state.replay_speed = 2.0;
+                self.state.set_status("Speed: 2x");
+            }
+            KeyCode::Char('5') => {
+                self.state.replay_speed = 5.0;
+                self.state.set_status("Speed: 5x");
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.state.current_menu = MenuItem::MainMenu,
+            _ => {}
+        }
+    }
+
+    fn replay(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.state.selected_replay = self.state.selected_replay.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max_idx = self.state.replay_files.len().saturating_sub(1);
+                self.state.selected_replay = (self.state.selected_replay + 1).min(max_idx);
+            }
+            KeyCode::Enter => {
+                self.state.replay_paused = !self.state.replay_paused;
+                if self.state.replay_paused {
+                    self.state.set_status("Replay paused");
+                } else {
+                    self.state.set_status("Replay started");
+                }
+            }
+            KeyCode::Char('1') => {
+                self.state.replay_speed = 1.0;
+                self.state.set_status("Speed: 1x");
             }
             KeyCode::Char('2') => {
                 self.state.replay_speed = 2.0;
@@ -1394,22 +1647,22 @@ impl App {
     }
 
     fn market_selection(&mut self, key: event::KeyEvent) {
-        let ms = &mut self.state.market_selection;
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                ms.select_prev();
+                self.state.market_selection.select_prev();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                ms.select_next();
+                self.state.market_selection.select_next();
             }
             KeyCode::PageUp => {
-                ms.prev_page();
+                self.state.market_selection.prev_page();
             }
             KeyCode::PageDown => {
-                ms.next_page();
+                self.state.market_selection.next_page();
             }
             KeyCode::Enter => {
-                if let Some(market) = ms.selected_market() {
+                let selected_market = self.state.market_selection.selected_market().cloned();
+                if let Some(market) = selected_market {
                     // Convert PolymarketMarket to Market and set as current
                     let price = market.yes_price.unwrap_or(0.5);
                     self.state.market = Market {
@@ -1418,12 +1671,13 @@ impl App {
                         price,
                         volume: market.volume,
                     };
-                    self.state.set_status(&format!("Selected: {}", market.question));
+                    self.state
+                        .set_status(&format!("Selected: {}", market.question));
                     self.state.current_menu = MenuItem::PaperTrading;
                 }
             }
             KeyCode::Char('/') => {
-                ms.is_searching = true;
+                self.state.market_selection.is_searching = true;
                 self.state.set_status("Search markets...");
             }
             KeyCode::Char('r') => {
@@ -1432,22 +1686,22 @@ impl App {
                 // Would fetch from Polymarket API here
             }
             KeyCode::Char('v') => {
-                ms.sort_by = MarketSortBy::Volume;
-                ms.sort_desc = true;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Volume;
+                self.state.market_selection.sort_desc = true;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Char('n') => {
-                ms.sort_by = MarketSortBy::Name;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Name;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Char('p') => {
-                ms.sort_by = MarketSortBy::Price;
-                ms.filter_and_sort();
+                self.state.market_selection.sort_by = MarketSortBy::Price;
+                self.state.market_selection.filter_and_sort();
             }
             KeyCode::Esc | KeyCode::Char('q') => {
-                ms.is_searching = false;
-                ms.search_query.clear();
-                ms.filter_and_sort();
+                self.state.market_selection.is_searching = false;
+                self.state.market_selection.search_query.clear();
+                self.state.market_selection.filter_and_sort();
                 self.state.current_menu = MenuItem::MainMenu;
             }
             _ => {}
@@ -1484,14 +1738,12 @@ impl App {
             KeyCode::Enter => {
                 self.state.strategy_name =
                     AVAILABLE_STRATEGIES[self.state.selected_strategy_index].to_string();
-                self.state.set_status(&format!(
-                    "Selected strategy: {}",
-                    self.state.strategy_name
-                ));
+                self.state
+                    .set_status(&format!("Selected strategy: {}", self.state.strategy_name));
             }
             KeyCode::Char('s') | KeyCode::Right => {
-                self.state.selected_strategy_index = (self.state.selected_strategy_index + 1)
-                    .min(AVAILABLE_STRATEGIES.len() - 1);
+                self.state.selected_strategy_index =
+                    (self.state.selected_strategy_index + 1).min(AVAILABLE_STRATEGIES.len() - 1);
             }
             KeyCode::Char('w') | KeyCode::Left => {
                 self.state.selected_strategy_index =
@@ -1798,15 +2050,22 @@ fn render_paper_trading(state: &AppState, area: Rect, buf: &mut ratatui::buffer:
     } else {
         let mut content = String::from("Strategy Signals\n\n");
         for signal in state.strategy_signals.iter().take(5) {
-            let side_mark = signal.side.as_ref()
-                .map(|s| if s.contains("Buy") { "🟢" } else if s.contains("Sell") { "🔴" } else { "⚪" })
+            let side_mark = signal
+                .side
+                .as_ref()
+                .map(|s| {
+                    if s.contains("Buy") {
+                        "🟢"
+                    } else if s.contains("Sell") {
+                        "🔴"
+                    } else {
+                        "⚪"
+                    }
+                })
                 .unwrap_or("⚪");
             content.push_str(&format!(
                 "{} [{}] {}\n  {}\n\n",
-                side_mark,
-                signal.timestamp,
-                signal.signal_type,
-                signal.details
+                side_mark, signal.timestamp, signal.signal_type, signal.details
             ));
         }
         content
@@ -1981,11 +2240,7 @@ fn render_market_selection(state: &AppState, area: Rect, buf: &mut ratatui::buff
     .split(area);
 
     let ms = &state.market_selection;
-    let loading = if ms.is_loading {
-        " [Loading...]"
-    } else {
-        ""
-    };
+    let loading = if ms.is_loading { " [Loading...]" } else { "" };
     Paragraph::new(format!(" Market Selection{} ", loading))
         .style(Style::default().bg(Color::DarkGray).fg(Color::White))
         .alignment(Alignment::Center)
@@ -2014,7 +2269,9 @@ fn render_market_selection(state: &AppState, area: Rect, buf: &mut ratatui::buff
         .map(|(i, m)| {
             let marker = if i == ms.selected_index { "▶" } else { " " };
             let price_str = match (m.yes_price, m.no_price) {
-                (Some(yes), Some(no)) => format!("Yes: {:.2}% | No: {:.2}%", yes * 100.0, no * 100.0),
+                (Some(yes), Some(no)) => {
+                    format!("Yes: {:.2}% | No: {:.2}%", yes * 100.0, no * 100.0)
+                }
                 (Some(yes), None) => format!("Yes: {:.2}%", yes * 100.0),
                 _ => "N/A".to_string(),
             };
@@ -2298,14 +2555,22 @@ fn render_strategies(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Bu
             Style::default().fg(Color::White)
         };
         let desc = strategy_descriptions.get(strategy_id).unwrap_or(&"");
-        let active = if strategy_id == state.strategy_name { " [ACTIVE]" } else { "" };
+        let active = if strategy_id == state.strategy_name {
+            " [ACTIVE]"
+        } else {
+            ""
+        };
         lines.push(ListItem::new(Line::from(vec![
             Span::raw(marker),
             Span::styled(format!(" {} {}{}", strategy_id, desc, active), style),
         ])));
     }
     List::new(lines)
-        .block(Block::default().title(" Available Strategies ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(" Available Strategies ")
+                .borders(Borders::ALL),
+        )
         .render(chunks[1], buf);
 
     let current_desc = strategy_descriptions
@@ -2467,5 +2732,43 @@ mod tests {
         assert_eq!(MenuItem::MainMenu, MenuItem::MainMenu);
         assert_eq!(MenuItem::PaperTrading, MenuItem::PaperTrading);
         assert_ne!(MenuItem::MainMenu, MenuItem::PaperTrading);
+    }
+
+    #[test]
+    fn test_build_market_snapshots_from_selection() {
+        let mut state = AppState::new();
+        state.market_selection.markets = vec![PolymarketMarket {
+            condition_id: "m1".to_string(),
+            question: "Test Market".to_string(),
+            slug: "test-market".to_string(),
+            active: true,
+            yes_price: Some(0.62),
+            no_price: Some(0.38),
+            volume: 1000.0,
+            liquidity: 500.0,
+        }];
+
+        let snapshots = state.build_market_snapshots();
+        let yes_key = MarketTokenKey {
+            market_id: "m1".to_string(),
+            token_id: "yes".to_string(),
+        };
+        let no_key = MarketTokenKey {
+            market_id: "m1".to_string(),
+            token_id: "no".to_string(),
+        };
+
+        let yes_snapshot = snapshots.get(&yes_key).expect("yes snapshot");
+        assert_eq!(yes_snapshot.mid_tick, Some(6200));
+        let no_snapshot = snapshots.get(&no_key).expect("no snapshot");
+        assert_eq!(no_snapshot.mid_tick, Some(3800));
+    }
+
+    #[test]
+    fn test_risk_allows_trade_blocks_oversize() {
+        let mut state = AppState::new();
+        state.risk_config.max_order_size = 1;
+        let err = state.risk_allows_trade(Side::Buy, 5_000_000).unwrap_err();
+        assert!(err.contains("Order size"));
     }
 }
