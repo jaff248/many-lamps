@@ -816,8 +816,16 @@ impl AppState {
     pub fn drawdown_bps(&self) -> i64 {
         if self.realized_pnl < 0 {
             let balance = self.backtest_balance.max(1.0);
-            (-self.realized_pnl as f64 / balance * 10000.0) as i64
+            // realized_pnl is in micro-USDC, convert to dollars for consistent calculation
+            let pnl_dollars = -self.realized_pnl as f64 / 1_000_000.0;
+            let result = (pnl_dollars / balance * 10000.0) as i64;
+            // DEBUG: Log drawdown calculation for validation
+            tracing::debug!(target: "mtrader_dashboard",
+                "DRAWDOWN_DEBUG: realized_pnl={}, pnl_dollars={}, balance={}, drawdown_bps={}",
+                self.realized_pnl, pnl_dollars, balance, result);
+            result
         } else {
+            tracing::debug!(target: "mtrader_dashboard", "DRAWDOWN_DEBUG: no loss, realized_pnl={}", self.realized_pnl);
             0
         }
     }
@@ -995,7 +1003,14 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         self.terminal.clear()?;
         self.load_replay_files();
+        let mut previous_menu = self.state.current_menu;
         loop {
+            // BUG FIX: Clear terminal before each render to prevent screen corruption
+            // when navigating between screens
+            if self.state.current_menu != previous_menu {
+                self.terminal.clear()?;
+                previous_menu = self.state.current_menu;
+            }
             self.terminal
                 .draw(|f| f.render_widget(&TuiApp { state: &self.state }, f.area()))?;
             if event::poll(Duration::from_millis(50))? {
@@ -1040,9 +1055,11 @@ impl App {
 
         // Activate strategy if not already active
         let strategy_name = self.state.strategy_name.clone();
+        let mut just_activated = false;
         if let Some(ref mut strategy) = self.state.active_strategy {
             if !strategy.is_active() {
                 strategy.activate();
+                just_activated = true;
             }
 
             // Get actions from strategy
@@ -1055,10 +1072,10 @@ impl App {
                 }
             }
         }
-        // Set status after strategy operations
-        if self.state.auto_trading == AutoTradingState::Running {
-            self.state
-                .set_status(&format!("Strategy '{}' activated", strategy_name));
+        // BUG FIX: Only set activation message when we just activated the strategy
+        // This prevents the message from appearing on every tick
+        if just_activated {
+            self.state.set_status(&format!("Strategy '{}' activated", strategy_name));
         }
     }
 
@@ -1127,6 +1144,9 @@ impl App {
 
                     // Add simulated fee
                     let fee = (size_shares as f64 * price_f * 0.001) as i64; // 10 bps fee estimate
+                    tracing::debug!(target: "mtrader_dashboard", 
+                        "FEE_DEBUG: size_shares={}, price_f={}, fee={} (unit: micro-USDC)",
+                        size_shares, price_f, fee);
                     self.state.total_fees += fee;
 
                     // Update realized PnL (simplified)

@@ -313,6 +313,75 @@ impl DashboardWidget {
     }
 }
 
+/// Run dashboard thread with terminal rendering
+fn run_dashboard_thread(receiver: mpsc::Receiver<DashboardState>) {
+    let stdout = io::stdout();
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
+    terminal.clear().expect("Failed to clear terminal");
+
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(new_state) => {
+                terminal
+                    .draw(|f| {
+                        let widget = DashboardWidget::new(new_state);
+                        f.render_widget(&widget, f.area());
+                    })
+                    .ok();
+            }
+            Err(_) => {
+                if thread::panicking() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Run dashboard thread with pre-created terminal
+fn run_dashboard_thread_with_terminal(
+    receiver: mpsc::Receiver<DashboardState>, 
+    mut terminal: Terminal<CrosstermBackend<io::Stdout>>
+) {
+    terminal.clear().ok();
+
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(new_state) => {
+                terminal
+                    .draw(|f| {
+                        let widget = DashboardWidget::new(new_state);
+                        f.render_widget(&widget, f.area());
+                    })
+                    .ok();
+            }
+            Err(_) => {
+                if thread::panicking() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Run dashboard thread without terminal (headless mode)
+fn run_dashboard_thread_no_tty(receiver: mpsc::Receiver<DashboardState>) {
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(500)) {
+            Ok(_new_state) => {
+                // In headless mode, we just drain the channel
+                // The paper trading command already logs to console
+            }
+            Err(_) => {
+                if thread::panicking() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Dashboard Controller
 pub struct DashboardController {
     sender: mpsc::Sender<DashboardState>,
@@ -331,29 +400,22 @@ impl DashboardController {
             last_update: Instant::now(),
         };
 
+        // Check if stdout is a TTY and spawn appropriate thread
         thread::spawn(move || {
+            // Try to create a terminal; if it fails, run in headless mode
             let stdout = io::stdout();
             let backend = CrosstermBackend::new(stdout);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal.clear().unwrap();
-
-            loop {
-                match receiver.recv_timeout(Duration::from_millis(100)) {
-                    Ok(new_state) => {
-                        terminal
-                            .draw(|f| {
-                                let widget = DashboardWidget::new(new_state);
-                                f.render_widget(&widget, f.area());
-                            })
-                            .ok();
-                    }
-                    Err(_) => {
-                        if thread::panicking() {
-                            break;
-                        }
-                    }
+            
+            // Try to create terminal and clear it
+            if let Ok(mut terminal) = Terminal::new(backend) {
+                if terminal.clear().is_ok() {
+                    run_dashboard_thread_with_terminal(receiver, terminal);
+                    return;
                 }
             }
+            
+            // Fallback: run without terminal rendering, just drain the channel
+            run_dashboard_thread_no_tty(receiver);
         });
 
         controller

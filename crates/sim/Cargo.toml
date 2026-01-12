@@ -20,8 +20,16 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
+# Deterministic iteration order for queue tracking
+indexmap = "2.0"
+
 # Random for fill simulation
 rand = "0.8"
 rand_distr = "0.4"
 
 [dev-dependencies]
+mtrader-book = { package = "many-lamps-book", path = "../book" }
+mtrader-core = { package = "many-lamps-core", path = "../core" }
+mtrader-risk = { path = "../risk" }
+mtrader-strategy = { path = "../strategy" }
+indexmap = "2.0"

@@ -309,6 +309,9 @@ async fn main() -> Result<()> {
             status::run(&cli.config, verbose)?;
         }
         Commands::Tui => {
+            // Suppress INFO logs during TUI to prevent log bleeding into TUI display
+            // Only ERROR and WARN level logs will be shown
+            logging::init("error", false)?;
             tui::run(None).await?;
         }
         Commands::ValidateConfig => {

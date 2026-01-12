@@ -103,7 +103,17 @@ impl Position {
             entry as i64 - current_tick as i64
         };
 
-        (pnl_per_share as i128 * self.net_size.abs() as i128 / 10000) as i64
+        let net_size_abs = self.net_size.abs() as i128;
+        let pnl_raw = pnl_per_share as i128 * net_size_abs / 10000;
+        
+        // DEBUG: Log potential overflow conditions
+        if pnl_raw > i64::MAX as i128 || pnl_raw < i64::MIN as i128 {
+            tracing::warn!(target: "mtrader_risk", 
+                "PNL_OVERFLOW: pnl_per_share={}, net_size={}, pnl_raw={}, clamped={}",
+                pnl_per_share, self.net_size, pnl_raw, pnl_raw.clamp(i64::MIN as i128, i64::MAX as i128));
+        }
+        
+        pnl_raw as i64
     }
 
     /// Check if position is long.

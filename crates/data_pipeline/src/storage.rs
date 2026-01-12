@@ -8,7 +8,7 @@ use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, TimeZone, Utc, Datelike, Timelike};
 use many_lamps_core::{NormalizedMarketData, SignalData, TokenId};
 use mtrader_ml::ExtractedFeatureVector;
-use parquet::basic::Compression;
+use parquet::basic::{Compression, GzipLevel, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::collections::hash_map::{Entry, HashMap};
 use std::fs::{self, File};
@@ -35,8 +35,8 @@ impl From<CompressionCodec> for Compression {
         match codec {
             CompressionCodec::None => Compression::UNCOMPRESSED,
             CompressionCodec::Snappy => Compression::SNAPPY,
-            CompressionCodec::Gzip => Compression::GZIP,
-            CompressionCodec::Zstd => Compression::ZSTD,
+            CompressionCodec::Gzip => Compression::GZIP(GzipLevel::default()),
+            CompressionCodec::Zstd => Compression::ZSTD(ZstdLevel::default()),
         }
     }
 }
@@ -346,12 +346,12 @@ impl TimeSeriesStorage {
     fn get_or_create_writer(&mut self, timestamp_us: i64) -> Result<&mut ActivePartitionWriter, StorageError> {
         let key = PartitionKey::from_timestamp_us(timestamp_us);
         let active_partitions_before = self.active_writers.len();
-
+        let data_type_path = self.data_type_path();
+        
         match self.active_writers.entry(key.clone()) {
             Entry::Occupied(existing) => Ok(existing.into_mut()),
             Entry::Vacant(vacant) => {
                 let partition_path = key.to_path(self.config.partition_scheme);
-                let data_type_path = self.data_type_path();
                 let file_path = self.config.base_path
                     .join(data_type_path)
                     .join(&partition_path);
@@ -754,12 +754,12 @@ mod tests {
         NormalizedMarketData {
             timestamp_us,
             token_id: TokenId(token_id.to_string()),
-            mid_price: 0.55 + rand::thread_rng().gen::<f64>() * 0.01,
-            spread: 0.001 + rand::thread_rng().gen::<f64>() * 0.0005,
-            bid_size: 100.0 + rand::thread_rng().gen::<f64>() * 50.0,
-            ask_size: 100.0 + rand::thread_rng().gen::<f64>() * 50.0,
-            imbalance: rand::thread_rng().gen::<f64>() * 2.0 - 1.0,
-            volatility: 0.001 + rand::thread_rng().gen::<f64>() * 0.01,
+            mid_price: 0.55 + rand::thread_rng().rng::<f64>() * 0.01,
+            spread: 0.001 + rand::thread_rng().rng::<f64>() * 0.0005,
+            bid_size: 100.0 + rand::thread_rng().rng::<f64>() * 50.0,
+            ask_size: 100.0 + rand::thread_rng().rng::<f64>() * 50.0,
+            imbalance: rand::thread_rng().rng::<f64>() * 2.0 - 1.0,
+            volatility: 0.001 + rand::thread_rng().rng::<f64>() * 0.01,
             best_bid: Some(0.55),
             best_ask: Some(0.551),
         }
@@ -768,7 +768,7 @@ mod tests {
     fn create_test_features(timestamp_us: i64, token_id: &str) -> ExtractedFeatureVector {
         let mut features = ExtractedFeatureVector::new(timestamp_us, TokenId(token_id.to_string()));
         for i in 0..24 {
-            features.features[i] = rand::thread_rng().gen();
+            features.features[i] = rand::thread_rng().rng();
         }
         features
     }
@@ -778,9 +778,9 @@ mod tests {
             timestamp_us,
             token_id: TokenId(token_id.to_string()),
             model_id: "test_model_v1".to_string(),
-            value: rand::thread_rng().gen(),
+            value: rand::thread_rng().rng(),
             signal_type: SignalType::Direction,
-            confidence: rand::thread_rng().gen(),
+            confidence: rand::thread_rng().rng(),
             feature_importance: None,
         }
     }

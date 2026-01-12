@@ -16,6 +16,7 @@ use mtrader_core::{ClientOrderId, Side, Size, Tick, MAX_TICK};
 use mtrader_execution::{Order, OrderState};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use indexmap::IndexMap;
 
 /// Configuration for realistic fill simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,8 +123,8 @@ pub struct QueuePosition {
 /// Information about a price level's queue.
 #[derive(Debug, Clone)]
 struct PriceLevelQueue {
-    /// Orders at this price level, keyed by order ID
-    orders: HashMap<String, QueuedOrder>,
+    /// Orders at this price level, keyed by order ID (using IndexMap for deterministic order)
+    orders: indexmap::IndexMap<String, QueuedOrder>,
     /// Total volume at this price level
     total_volume: Size,
     /// Next submission time for ordering
@@ -326,7 +327,7 @@ impl RealisticFillSimulator {
         timestamp_ns: u64,
     ) {
         let queue = self.price_queues.entry(price_tick).or_insert_with(|| PriceLevelQueue {
-            orders: HashMap::new(),
+            orders: IndexMap::new(),
             total_volume: 0,
             next_submission_time: 0,
         });
@@ -340,6 +341,7 @@ impl RealisticFillSimulator {
             submitted_at_ns: timestamp_ns,
         };
 
+        // IndexMap.insert maintains insertion order (FIFO)
         queue.orders.insert(order_id.to_string(), queued);
         queue.total_volume += size;
     }

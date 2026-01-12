@@ -3248,6 +3248,7 @@ name = "mtrader-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indexmap",
  "many-lamps-book",
  "many-lamps-core",
  "mtrader-execution",
