@@ -358,6 +358,73 @@ impl MarketSelection {
         let page_markets = self.current_page_markets();
         page_markets.get(self.selected_index)
     }
+
+    /// Load sample markets (for demo/when API unavailable)
+    pub fn load_sample_markets(&mut self) {
+        self.markets = vec![
+            PolymarketMarket {
+                condition_id: "btc-updown-15m-1767933000".to_string(),
+                question: "Will BTC be up or down in 15 minutes?".to_string(),
+                slug: "btc-updown-15m-1767933000".to_string(),
+                active: true,
+                yes_price: Some(0.55),
+                no_price: Some(0.45),
+                volume: 50000.0,
+                liquidity: 10000.0,
+            },
+            PolymarketMarket {
+                condition_id: "btc-updown-15m-1767994200".to_string(),
+                question: "Will BTC be up or down in 15 minutes?".to_string(),
+                slug: "btc-updown-15m-1767994200".to_string(),
+                active: true,
+                yes_price: Some(0.52),
+                no_price: Some(0.48),
+                volume: 35000.0,
+                liquidity: 8000.0,
+            },
+            PolymarketMarket {
+                condition_id: "eth-updown-15m-1767933000".to_string(),
+                question: "Will ETH be up or down in 15 minutes?".to_string(),
+                slug: "eth-updown-15m-1767933000".to_string(),
+                active: true,
+                yes_price: Some(0.58),
+                no_price: Some(0.42),
+                volume: 25000.0,
+                liquidity: 5000.0,
+            },
+            PolymarketMarket {
+                condition_id: "sol-updown-15m-1767933000".to_string(),
+                question: "Will SOL be up or down in 15 minutes?".to_string(),
+                slug: "sol-updown-15m-1767933000".to_string(),
+                active: true,
+                yes_price: Some(0.51),
+                no_price: Some(0.49),
+                volume: 15000.0,
+                liquidity: 3000.0,
+            },
+            PolymarketMarket {
+                condition_id: "doge-updown-5m-1767933000".to_string(),
+                question: "Will DOGE be up or down in 5 minutes?".to_string(),
+                slug: "doge-updown-5m-1767933000".to_string(),
+                active: true,
+                yes_price: Some(0.50),
+                no_price: Some(0.50),
+                volume: 8000.0,
+                liquidity: 2000.0,
+            },
+            PolymarketMarket {
+                condition_id: "avax-updown-15m-1767933000".to_string(),
+                question: "Will AVAX be up or down in 15 minutes?".to_string(),
+                slug: "avax-updown-15m-1767933000".to_string(),
+                active: true,
+                yes_price: Some(0.53),
+                no_price: Some(0.47),
+                volume: 12000.0,
+                liquidity: 2500.0,
+            },
+        ];
+        self.filter_and_sort();
+    }
 }
 
 /// Risk configuration for TUI
@@ -1671,6 +1738,10 @@ impl App {
     }
 
     fn market_selection(&mut self, key: event::KeyEvent) {
+        // Load markets on first entry if empty
+        if self.state.market_selection.markets.is_empty() {
+            self.state.market_selection.load_sample_markets();
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.state.market_selection.select_prev();
@@ -1678,10 +1749,10 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.state.market_selection.select_next();
             }
-            KeyCode::PageUp => {
+            KeyCode::Char('-') | KeyCode::Char('_') => {
                 self.state.market_selection.prev_page();
             }
-            KeyCode::PageDown => {
+            KeyCode::Char('+') | KeyCode::Char('=') => {
                 self.state.market_selection.next_page();
             }
             KeyCode::Enter => {
@@ -2330,7 +2401,7 @@ fn render_market_selection(state: &AppState, area: Rect, buf: &mut ratatui::buff
         MarketSortBy::Activity => "Activity",
     };
     let footer = format!(
-        " [↑/↓] Select  [Enter] Trade  [/] Search  [r] Refresh  [v/n/p] Sort: {}  [PgUp/Dn] Page  [q] Back ",
+        " [↑/↓] Select  [Enter] Trade  [/] Search  [r] Refresh  [v/n/p] Sort: {}  [+/-] Page  [q] Back ",
         sort_by
     );
     Paragraph::new(footer)
