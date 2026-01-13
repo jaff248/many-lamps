@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{VecDeque, HashMap};
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Market regime classification
 ///
@@ -416,7 +416,7 @@ impl RegimeDetector {
         }
 
         // Check for trend (only if not extreme volatility)
-        let (direction, correlation) = self.compute_trend_correlation()?;
+        let (_direction, correlation) = self.compute_trend_correlation()?;
 
         if correlation.abs() >= self.config.trend_threshold {
             return Some(MarketRegime::Trending {
@@ -437,7 +437,7 @@ impl RegimeDetector {
     }
 
     /// Determine if regime should change based on cooldown
-    fn should_change_regime(&self, new_regime: &MarketRegime, timestamp: i64) -> bool {
+    fn should_change_regime(&self, _new_regime: &MarketRegime, timestamp: i64) -> bool {
         // Always allow first regime classification
         if self.update_count < self.config.lookback_window {
             return true;
@@ -888,7 +888,7 @@ pub fn features_to_regime(features: &ExtractedFeatureVector) -> f64 {
     let mid_price_idx = 0; // MID_PRICE
     let volatility_idx = 5; // PRICE_VOLATILITY
 
-    let price = features.features[mid_price_idx];
+    let _price = features.features[mid_price_idx];
     let volatility = features.features[volatility_idx].abs();
 
     // Simple regime indicator based on volatility

@@ -394,12 +394,12 @@ impl RealisticFillSimulator {
             .collect();
 
         for order_id in ready_cancels {
-        if let Some(pending) = self.pending_cancels.remove(&order_id) {
+        if let Some(_pending) = self.pending_cancels.remove(&order_id) {
                 if let Some(live) = self.live_orders.remove(&order_id) {
                     // Remove from price queue
                     if live.order.price_tick() != 0 {
                         if let Some(queue) = self.price_queues.get_mut(&live.order.price_tick()) {
-                            queue.orders.remove(&order_id);
+                            queue.orders.shift_remove(&order_id);
                             queue.total_volume = queue.total_volume.saturating_sub(live.order.remaining_size);
                         }
                     }

@@ -9,7 +9,7 @@
 //! Weights are clamped to [min_weight, max_weight] and renormalized.
 
 use crate::traits::{Strategy, StrategyAction, StrategyContext};
-use mtrader_core::{ClientOrderId, Side, Size, Tick};
+use mtrader_core::{Side, Size, Tick};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -296,7 +296,7 @@ impl Strategy for StrategyEnsemble {
 
         let mut all_actions = Vec::new();
 
-        for (idx, strategy) in self.strategies.iter_mut().enumerate() {
+        for (_idx, strategy) in self.strategies.iter_mut().enumerate() {
             let actions = strategy.on_update(ctx);
             // Tag actions with strategy index for tracking
             for action in actions {
@@ -314,7 +314,7 @@ impl Strategy for StrategyEnsemble {
         all_actions
     }
 
-    fn on_fill(&mut self, ctx: &StrategyContext, side: Side, tick: Tick, size: Size) {
+    fn on_fill(&mut self, _ctx: &StrategyContext, _side: Side, _tick: Tick, _size: Size) {
         // Track fill for all strategies - in practice, we'd need to know which
         // strategy generated the order. For now, we record a placeholder return.
         // The actual implementation would need order attribution.

@@ -9,7 +9,7 @@ use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
 use mtrader_core::Side;
 use mtrader_dashboard::DashboardController;
 use mtrader_execution::state_manager::OrderManagerConfig;
-use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
+use mtrader_execution::{Order, OrderKind, OrderStateManager};
 use mtrader_gateway::{ParsedEvent, RestClient, RestConfig, WsClient, WsConfig};
 use mtrader_risk::{PnLSnapshot, Position};
 use mtrader_sim::fill_sim::SimEvent;
@@ -132,7 +132,7 @@ pub async fn run(config: &Config, market: &str, strategy_name: &str, record: boo
     info!("Paper trading active - dashboard starting... press Ctrl+C to stop");
 
     // Track strategy start time for performance reporting
-    let start_time_ns = clock.now_ns().max(0) as u64;
+    let _start_time_ns = clock.now_ns().max(0) as u64;
 
     loop {
         tokio::select! {

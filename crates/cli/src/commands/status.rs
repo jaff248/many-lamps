@@ -1,6 +1,5 @@
 //! Status Command - Check system status
 
-use crate::config::Config;
 use anyhow::Result;
 
 /// Check and display system status

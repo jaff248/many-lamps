@@ -216,7 +216,7 @@ impl Strategy for BundleMakerStrategy {
         &self.name
     }
 
-    fn on_update(&mut self, ctx: &StrategyContext) -> Vec<StrategyAction> {
+    fn on_update(&mut self, _ctx: &StrategyContext) -> Vec<StrategyAction> {
         if !self.active {
             return vec![];
         }

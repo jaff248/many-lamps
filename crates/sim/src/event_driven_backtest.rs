@@ -31,11 +31,11 @@
 use mtrader_book::ArrayBook;
 use mtrader_core::{ClientOrderId, OrderReason, Side, Size, Tick};
 use mtrader_execution::{Order, OrderKind, OrderState, OrderType};
-use mtrader_risk::{PnLTracker, Position, PositionTracker};
+use mtrader_risk::{PnLTracker, PositionTracker};
 use mtrader_strategy::{Strategy, StrategyAction, StrategyContext, WorkingOrder};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
 use std::path::Path;
 use thiserror::Error;
@@ -829,7 +829,7 @@ impl EventDrivenBacktest {
                 }
                 StrategyAction::CancelOrder { client_order_id, reason: _ } => {
                     // Handle cancel - remove order from active orders
-                    if let Some(active_order) = self.active_orders.remove(&client_order_id.0) {
+                    if let Some(_active_order) = self.active_orders.remove(&client_order_id.0) {
                         // Update order history
                         for order_rec in self.orders.iter_mut() {
                             if order_rec.client_order_id == client_order_id {
@@ -851,7 +851,7 @@ impl EventDrivenBacktest {
                         }
 
                         // Place new order
-                        if let OrderKind::Limit { price_tick, size_shares } = new_kind {
+                        if let OrderKind::Limit { price_tick: _, size_shares: _ } = new_kind {
                             let order = Order::new(
                                 ClientOrderId(format!("bt-cli-{}", self.next_order_id)),
                                 active_order.order.asset_id.clone(),
@@ -936,7 +936,7 @@ impl EventDrivenBacktest {
         &mut self,
         timestamp_ns: u64,
         order_id: &str,
-        client_order_id: &ClientOrderId,
+        _client_order_id: &ClientOrderId,
         asset_id: &str,
         side: Side,
         price_tick: Tick,
