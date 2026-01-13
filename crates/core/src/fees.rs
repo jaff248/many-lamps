@@ -13,7 +13,7 @@
 //! - price=0.75: 2.50
 //! - price=0.90: 1.00
 
-use crate::types::{SIZE_DECIMALS, Side, Size, Tick};
+use crate::types::{Size, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Fee model for Polymarket markets

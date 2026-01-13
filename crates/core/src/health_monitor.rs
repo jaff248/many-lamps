@@ -647,9 +647,9 @@ impl HealthMonitor {
     /// Update system metrics from component data
     fn update_system_metrics_from_component(
         &mut self,
-        latency_samples: &[f64],
-        error_count: u64,
-        request_count: u64,
+        _latency_samples: &[f64],
+        _error_count: u64,
+        _request_count: u64,
     ) {
         // Calculate average latency across all components
         let mut total_latency = 0.0;

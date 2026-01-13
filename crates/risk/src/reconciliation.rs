@@ -360,7 +360,7 @@ mod tests {
         let mut expected = HashMap::new();
         expected.insert(token("token-1"), 100.0);
 
-        let mut actual = HashMap::new();
+        let actual = HashMap::new();
         // token-1 not in actual
 
         let discrepancies = reconciliator.reconcile(&expected, &actual);
@@ -372,7 +372,7 @@ mod tests {
     fn test_reconciliation_missing_in_expected() {
         let mut reconciliator = PositionReconciliator::default();
 
-        let mut expected = HashMap::new();
+        let expected = HashMap::new();
 
         let mut actual = HashMap::new();
         actual.insert(token("token-1"), 50.0);

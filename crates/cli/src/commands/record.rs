@@ -9,7 +9,7 @@ use mtrader_gateway::{ParsedEvent, WsClient, WsConfig};
 use mtrader_recorder::{event_recorder::EventRecorderConfig, EventRecorder, FrameRecorder};
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Parse duration string (e.g., "1h", "30m", "24h").
 fn parse_duration(s: &str) -> Option<Duration> {

@@ -13,7 +13,7 @@ use mtrader_core::events::{
 use mtrader_core::fees::{FeeSchedule, MarketFeeProfile};
 use mtrader_core::{ClientOrderId, MarketId, OrderReason, Side, StrategyId, TokenId};
 use mtrader_execution::state_manager::OrderManagerConfig;
-use mtrader_execution::{Order, OrderKind, OrderStateManager, OrderType};
+use mtrader_execution::{Order, OrderKind, OrderStateManager};
 use mtrader_risk::{PnLSnapshot, Position};
 use mtrader_sim::fill_sim::SimEvent;
 use mtrader_sim::paper_book::PaperOrder;

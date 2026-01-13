@@ -6,13 +6,13 @@ use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, TimeZone, Utc, Datelike, Timelike};
-use many_lamps_core::{NormalizedMarketData, SignalData, TokenId};
+use many_lamps_core::{NormalizedMarketData, SignalData};
 use mtrader_ml::ExtractedFeatureVector;
 use parquet::basic::{Compression, GzipLevel, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::collections::hash_map::{Entry, HashMap};
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Compression algorithm for Parquet files
@@ -345,7 +345,7 @@ impl TimeSeriesStorage {
     /// Get or create writer for a partition
     fn get_or_create_writer(&mut self, timestamp_us: i64) -> Result<&mut ActivePartitionWriter, StorageError> {
         let key = PartitionKey::from_timestamp_us(timestamp_us);
-        let active_partitions_before = self.active_writers.len();
+        let _active_partitions_before = self.active_writers.len();
         let data_type_path = self.data_type_path();
         
         match self.active_writers.entry(key.clone()) {
@@ -713,7 +713,7 @@ impl TimeSeriesStorage {
         self.flush()?;
 
         let writers: Vec<_> = self.active_writers.drain().collect();
-        for (_, mut writer) in writers {
+        for (_, writer) in writers {
             writer.writer.close()?;
         }
 

@@ -2668,7 +2668,7 @@ fn render_strategies(state: &AppState, area: Rect, buf: &mut ratatui::buffer::Bu
         )
         .render(chunks[1], buf);
 
-    let current_desc = strategy_descriptions
+    let _current_desc = strategy_descriptions
         .get(state.strategy_name.as_str())
         .unwrap_or(&"");
     let footer = format!(

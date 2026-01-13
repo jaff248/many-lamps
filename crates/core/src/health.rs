@@ -8,10 +8,9 @@
 //! - Clock anomalies
 //! - Repeated failures
 
-use crate::types::{MarketId, TokenId};
+use crate::types::TokenId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Reasons for entering SAFE_MODE
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

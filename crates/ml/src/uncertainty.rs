@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn test_confidence_interval() {
-        let config = UncertaintyConfig::default();
+        let _config = UncertaintyConfig::default();
 
         let config_95 = UncertaintyConfig {
             num_samples: 100,

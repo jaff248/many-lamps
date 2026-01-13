@@ -407,7 +407,7 @@ pub fn scaled_dot_product_attention(
     let d_v = if v.is_empty() { 0 } else { v[0].len() };
     let mut output: Vec<Vec<f64>> = Vec::with_capacity(seq_len_q);
 
-    for (i, weights) in attention_weights.iter().enumerate() {
+    for (_i, weights) in attention_weights.iter().enumerate() {
         let mut weighted_sum = vec![0.0; d_v];
         for (j, &weight) in weights.iter().enumerate() {
             if j < v.len() {

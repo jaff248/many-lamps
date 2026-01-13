@@ -200,7 +200,7 @@ impl MarginSoftmaxClassifier {
         
         // Compute softmax
         let max_logit = logits.iter().fold(f64::MIN, |m, &x| m.max(x));
-        let mut exp_logits: Vec<f64> = logits.iter()
+        let exp_logits: Vec<f64> = logits.iter()
             .map(|l| (*l - max_logit).exp())
             .collect();
         
@@ -310,7 +310,7 @@ impl MarginSoftmaxClassifier {
         
         // Numerically stable softmax cross-entropy
         let max_logit = logits.iter().fold(f64::MIN, |m, &x| m.max(x));
-        let mut exp_logits: Vec<f64> = logits.iter()
+        let exp_logits: Vec<f64> = logits.iter()
             .map(|l| (*l - max_logit).exp())
             .collect();
         
@@ -364,7 +364,7 @@ impl MarginSoftmaxClassifier {
         
         // Softmax
         let max_logit = logits.iter().fold(f64::MIN, |m, &x| m.max(x));
-        let mut exp_logits: Vec<f64> = logits.iter()
+        let exp_logits: Vec<f64> = logits.iter()
             .map(|l| (*l - max_logit).exp())
             .collect();
         
@@ -384,9 +384,9 @@ impl MarginSoftmaxClassifier {
             let grad_factor = if is_target {
                 // For target class, we have additional margin effect
                 let cos_theta = cos_thetas[class_idx];
-                let cos_m = m.cos();
-                let sin_m = m.sin();
-                let sin_theta = (1.0 - cos_theta * cos_theta).sqrt().max(0.0);
+                let _cos_m = m.cos();
+                let _sin_m = m.sin();
+                let _sin_theta = (1.0 - cos_theta * cos_theta).sqrt().max(0.0);
                 
                 // d(cos(θ+m))/dθ = -sin(θ+m)
                 // But we're differentiating through the margin function

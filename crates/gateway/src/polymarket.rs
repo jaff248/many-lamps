@@ -15,7 +15,7 @@ use crate::messages::{
 use crate::ws_client::{WsCommand, WsConfig, WsState};
 use futures_util::{SinkExt, StreamExt};
 use mtrader_core::{
-    parse_price_to_tick_strict, parse_size, Side, Size, Tick,
+    parse_price_to_tick_strict, parse_size, Side,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
